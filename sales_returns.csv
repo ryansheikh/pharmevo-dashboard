@@ -1,0 +1,281 @@
+Yr,Mo,ProductName,TeamName,TotalUnits,TotalBonus,TotalDiscount,TotalRevenue,InvoiceCount
+2024,1,Azliv,Discontinued,-153.0,41.0,-385.5285,-40758.4215,135
+2024,1,EVOZID,Discontinued,-1.0,0.0,0.0,-191.25,1
+2024,1,FREEDEP,Scitech,0.0,0.0,0.0,-229.5,2
+2024,1,HIFAZAT,Discontinued,-91.0,0.0,-812.9731,-19020.4769,1
+2024,1,IBANDRO,Discontinued,-15.0,0.0,-44.625,-6649.125,21
+2024,1,LACTEUS GROW 3,Discontinued,-2.0,0.0,0.0,-2386.5,1
+2024,1,MYOPRO,Discontinued,-2.0,0.0,0.0,-410.18,2
+2024,1,SPEDICAM,Discontinued,-34.0,0.0,0.0,-4320.72,18
+2024,1,UFI,Discontinued,-71.0,0.0,-2193.4249999999997,-31594.075,126
+2024,1,WINZITH,Scitech,-1.0,0.0,0.0,-191.25,1
+2024,2,Aireez,Discontinued,-2.0,0.0,0.0,-285.6,2
+2024,2,Azliv,Discontinued,-53.0,-9.0,0.0,-12235.029999999999,39
+2024,2,EvoCheck,Discontinued,-288.0,-3.0,-191535.8436,-1467344.1564,79
+2024,2,HIFAZAT,Discontinued,-3.0,0.0,0.0,-337.83,1
+2024,2,IBANDRO,Discontinued,-53.0,0.0,-89.25,-23562.0,42
+2024,2,LACTEUS GROW 3,Discontinued,-1.0,0.0,0.0,-1193.25,1
+2024,2,MFIT,Discontinued,-1.0,0.0,0.0,-1220.52,1
+2024,2,SPEDICAM,Discontinued,-52.0,0.0,0.0,-6608.16,37
+2024,3,Aireez,Discontinued,-10.0,0.0,0.0,-1428.0,4
+2024,3,Azliv,Discontinued,-35.0,0.0,-6.375,-7636.8550000000005,44
+2024,3,BONEDOL,Discontinued,-1.0,0.0,0.0,-127.5,1
+2024,3,CLEAR LAX,Discontinued,-1.0,0.0,0.0,-408.0,1
+2024,3,ESMART,Discontinued,-21.0,0.0,0.0,-4466.9400000000005,11
+2024,3,EvoCheck,Discontinued,-77.0,0.0,-50130.455799999996,-393389.5442,59
+2024,3,Evocheck M BGM,Discontinued,-17.0,0.0,-816.0,-22304.0,2
+2024,3,Evopravir,Discontinued,-10.0,0.0,0.0,-19125.0,4
+2024,3,FORMIS,Discontinued,-5.0,0.0,0.0,-2179.5,5
+2024,3,FREEDEP,Scitech,-11.0,0.0,0.0,-2703.0,6
+2024,3,HIFAZAT,Discontinued,-3.0,0.0,0.0,-337.83,1
+2024,3,IBANDRO,Discontinued,-50.0,0.0,-86.55799999999999,-22225.942,43
+2024,3,INNOGEN N,Discontinued,-1.0,0.0,0.0,-394.4,1
+2024,3,INNOGEN R,Discontinued,-4.0,0.0,0.0,-1577.6,2
+2024,3,LACTEUS 1,Discontinued,-40.0,0.0,0.0,-47730.0,17
+2024,3,LACTEUS 2,Discontinued,-49.0,0.0,0.0,-58469.25,18
+2024,3,LACTEUS 3,Discontinued,-22.0,0.0,0.0,-26251.5,8
+2024,3,LACTEUS AR,Discontinued,-45.0,0.0,-595.2375,-58928.5125,12
+2024,3,LACTEUS GROW 3,Discontinued,-1.0,0.0,0.0,-1193.25,2
+2024,3,LACTEUS LF,Discontinued,-27.0,0.0,0.0,-35964.0,7
+2024,3,MFIT,Discontinued,-15.0,0.0,0.0,-18307.8,10
+2024,3,MYOPRO,Discontinued,-37.0,0.0,0.0,-7248.55,22
+2024,3,NOZEA,Discontinued,-4.0,0.0,0.0,-958.96,3
+2024,3,NUVAL,Discontinued,-17.0,0.0,0.0,-3601.4399999999996,9
+2024,3,NUVAL D,Discontinued,-26.0,0.0,0.0,-5841.5599999999995,11
+2024,3,PAIN GEAR,Discontinued,-15.0,0.0,-1225.962,-39639.437999999995,3
+2024,3,RIXABAC,Discontinued,-1.0,0.0,0.0,-434.53,1
+2024,3,SECURIN,Discontinued,-3.0,0.0,0.0,-646.62,2
+2024,3,SETSPIN,Discontinued,-30.0,0.0,-70.608,-8683.592,15
+2024,3,SPEDICAM,Discontinued,-215.0,0.0,-188.0777,-27134.1223,126
+2024,3,UFI,Discontinued,-339.0,0.0,-1287.75,-142693.75,112
+2024,3,WINZITH,Scitech,-2.0,0.0,0.0,-382.5,2
+2024,4,Aireez,Discontinued,-2.0,0.0,0.0,-285.5999999999999,6
+2024,4,Azliv,Discontinued,-36.0,-5.0,0.0,-7876.98,29
+2024,4,CLEAR LAX,Discontinued,-6.0,0.0,0.0,-2448.0,2
+2024,4,ESMART,Discontinued,-22.0,0.0,0.0,-4693.76,16
+2024,4,EVOCIN,Scitech,-2.0,0.0,0.0,-170.0,1
+2024,4,Eglaro,Navigators,-402.0,-2.0,-1027.4460000000001,-135532.25400000002,741
+2024,4,Evopravir,Discontinued,-1.0,0.0,0.0,-1912.5,1
+2024,4,FORMIS,Discontinued,-2.0,0.0,0.0,-871.8,2
+2024,4,FREEDEP,Scitech,-12.0,0.0,0.0,-2932.5,7
+2024,4,HIFAZAT,Discontinued,-2.0,0.0,0.0,-225.22,1
+2024,4,IBANDRO,Discontinued,-96.0,0.0,-245.4375,-42594.5625,76
+2024,4,INNOGEN N,Discontinued,-5.0,0.0,0.0,-1972.0,2
+2024,4,INNOGEN R,Discontinued,-2.0,0.0,0.0,-788.8,1
+2024,4,LACTEUS 1,Discontinued,-23.0,0.0,0.0,-27444.75,9
+2024,4,LACTEUS 2,Discontinued,-22.0,0.0,0.0,-26251.5,12
+2024,4,LACTEUS 3,Discontinued,-9.0,0.0,0.0,-10739.25,5
+2024,4,LACTEUS AR,Discontinued,-22.0,0.0,0.0,-29100.5,6
+2024,4,LACTEUS GROW 3,Discontinued,-9.0,0.0,0.0,-10739.25,4
+2024,4,LACTEUS LF,Discontinued,-16.0,0.0,0.0,-21312.0,5
+2024,4,LACTEUS MAMA,Discontinued,-8.0,0.0,0.0,-11026.0,7
+2024,4,MEZREL XR,Discontinued,-1.0,0.0,0.0,-187.0,1
+2024,4,MFIT,Discontinued,-15.0,0.0,0.0,-18307.8,14
+2024,4,MYOPRO,Discontinued,-57.0,0.0,0.0,-10402.67,27
+2024,4,NOZEA,Discontinued,-9.0,0.0,0.0,-2157.66,5
+2024,4,NUVAL,Discontinued,-58.0,0.0,0.0,-12920.66,19
+2024,4,NUVAL D,Discontinued,-41.0,0.0,0.0,-9591.53,15
+2024,4,PAIN GEAR,Discontinued,-1.0,0.0,0.0,-2724.36,1
+2024,4,REKLAIM,Discontinued,-58.0,0.0,120.30710000000002,-29194.547099999996,120
+2024,4,RIXABAC,Discontinued,-1.0,0.0,0.0,-141.95,1
+2024,4,SECURIN,Discontinued,-8.0,0.0,0.0,-1293.24,5
+2024,4,SETSPIN,Discontinued,-41.0,0.0,0.0,-12381.640000000001,17
+2024,4,SPEDICAM,Discontinued,-61.0,0.0,-6.354,-7745.526,38
+2024,4,UFI,Discontinued,-825.0,0.0,-2257.09,-349047.91000000003,274
+2024,4,WINZITH,Scitech,-1.0,0.0,0.0,-191.25,1
+2024,5,Aireez,Discontinued,-3.0,0.0,0.0,-428.40000000000003,2
+2024,5,Azliv,Discontinued,-16.0,-1.0,0.0,-2817.68,27
+2024,5,CLEAR LAX,Discontinued,-1.0,0.0,0.0,-408.0,1
+2024,5,EvoCheck,Discontinued,-35.0,0.0,-22630.446,-178969.554,29
+2024,5,FREEDEP,Scitech,-1.0,0.0,0.0,-255.0,1
+2024,5,IBANDRO,Discontinued,-15.0,0.0,0.0,-6693.75,16
+2024,5,LACTEUS 2,Discontinued,-3.0,0.0,0.0,-3579.75,3
+2024,5,MYOPRO,Discontinued,-11.0,0.0,0.0,-1604.46,4
+2024,5,NOZEA,Discontinued,-4.0,0.0,0.0,-958.96,1
+2024,5,REKLAIM,Discontinued,-48.0,0.0,-295.7553,-23765.684699999998,75
+2024,5,Retzole,Warriors,-626.0,0.0,-9682.945,-1107727.055,897
+2024,5,SPEDICAM,Discontinued,-3.0,0.0,0.0,-381.24,6
+2024,5,UFI,Discontinued,-163.0,0.0,-136.85,-70234.65,63
+2024,6,Aireez,Discontinued,-4.0,0.0,0.0,-571.2,3
+2024,6,Azliv,Discontinued,-13.0,0.0,-15.6894,-2023.8806,14
+2024,6,Evo Joshanda,Falcons,-738.0,-156.0,-16494.725000000002,-359885.275,144
+2024,6,EvoCheck,Discontinued,-36.0,0.0,-19183.3838,-188176.6162,26
+2024,6,Finno-Q,Warriors,-411.0,0.0,2406.1847000000007,-209648.8247,1329
+2024,6,IBANDRO,Discontinued,-2.0,0.0,0.0,-892.5,2
+2024,6,REKLAIM,Discontinued,-71.0,0.0,-135.3453,-35455.5347,92
+2024,6,Retzole,Warriors,-15.0,0.0,-1156.0,-25619.0,61
+2024,6,UFI,Discontinued,-32.0,0.0,0.0,-13574.5,8
+2024,7,ANEX,Discontinued,-1.0,0.0,0.0,-204.0,1
+2024,7,Aireez,Discontinued,-7.0,0.0,0.0,-999.6,5
+2024,7,Azliv,Discontinued,-6.0,0.0,-7.8445,-1010.3554999999999,10
+2024,7,Evo Joshanda,Falcons,-90.0,-2.0,4976.9464,-50876.94639999998,276
+2024,7,FREEDEP,Scitech,-1.0,0.0,0.0,-255.0,1
+2024,7,Finno-Q,Warriors,-38.0,0.0,-201.692,-18959.428,113
+2024,7,IBANDRO,Discontinued,-5.0,0.0,0.0,-2231.25,2
+2024,7,LACTEUS 2,Discontinued,-1.0,0.0,0.0,-1193.25,1
+2024,7,Retzole,Warriors,-1.0,0.0,0.0,-1785.0,40
+2024,7,SETSPIN,Discontinued,-1.0,0.0,0.0,-309.22,1
+2024,7,SPEDICAM,Discontinued,-1.0,0.0,0.0,-127.08,5
+2024,7,UFI,Discontinued,-14.0,0.0,0.0,-6332.5,5
+2024,8,Azliv,Discontinued,-1.0,0.0,0.0,-541.19,14
+2024,8,EvoCheck,Discontinued,-8.0,0.0,-5302.1528,-40777.847200000004,23
+2024,8,FORMIS,Discontinued,-1.0,0.0,0.0,-435.9,1
+2024,8,Finno-Q,Warriors,-22.0,0.0,-201.692,-10891.588,50
+2024,8,IBANDRO,Discontinued,-10.0,0.0,0.0,-4462.5,1
+2024,8,LACTEUS MAMA,Discontinued,-3.0,0.0,0.0,-4134.75,1
+2024,8,REKLAIM,Discontinued,-70.0,0.0,-701.7914,-34387.8086,62
+2024,8,Retzole,Warriors,-15.0,0.0,0.0,-26775.0,14
+2024,8,UFI,Discontinued,-3.0,0.0,0.0,-1530.0,3
+2024,8,ZOLTAR INSTA,Discontinued,-5.0,0.0,0.0,-1071.0,1
+2024,9,Actnise,Falcons,-427.0,-20.0,-1302.4125,-145171.3975,185
+2024,9,Eglaro,Navigators,-44.0,0.0,1123.258,-5073.618,535
+2024,9,EvoCheck,Discontinued,-23.0,0.0,-16128.0,-116352.0,16
+2024,9,NOZEA,Discontinued,-1.0,0.0,0.0,-239.74,1
+2024,9,NUVAL D,Discontinued,-6.0,0.0,0.0,-1534.6399999999999,4
+2024,9,Omron BPM Wrist,Omron,6.0,0.0,59270.523,-6224.222999999989,44
+2024,9,REKLAIM,Discontinued,-116.0,0.0,-541.3814,-57607.0986,127
+2024,9,SETSPIN,Discontinued,-4.0,0.0,0.0,-1236.88,2
+2024,9,UFI,Discontinued,-8.0,0.0,0.0,-3757.0,4
+2024,10,AXIFER,Discontinued,-3.0,0.0,0.0,-3187.5,8
+2024,10,Azliv,Discontinued,-2.0,0.0,4.7067,-472.20670000000007,18
+2024,10,EvoCheck,Discontinued,-64.0,0.0,-28777.8456,-339862.1544,43
+2024,10,FREEDEP,Scitech,-1.0,0.0,0.0,-229.5,1
+2024,10,IBANDRO,Discontinued,-3.0,0.0,0.0,-1338.75,2
+2024,10,NUVAL D,Discontinued,-17.0,0.0,0.0,-4839.05,3
+2024,10,REKLAIM,Discontinued,-48.0,0.0,-125.32,-23936.12,59
+2024,10,SPEDICAM,Discontinued,-1.0,0.0,0.0,-127.08,1
+2024,10,UFI,Discontinued,-3.0,0.0,0.0,-1045.5,2
+2024,11,AXIFER,Discontinued,-1.0,0.0,-53.125,-1009.375,3
+2024,11,Azliv,Discontinued,-74.0,-9.0,-93.65899999999999,-11977.360999999999,25
+2024,11,EvoCheck,Discontinued,-38.0,0.0,-19687.68,-199192.32,55
+2024,11,IBANDRO,Discontinued,-2.0,0.0,0.0,-892.5,2
+2024,11,NEBULIZERS,Omron,-2.0,0.0,-7794.872,-31179.488,2
+2024,11,REKLAIM,Discontinued,-91.0,0.0,-50.128,-45566.352,77
+2024,12,AXIFER,Discontinued,-25.0,0.0,0.0,-26562.5,8
+2024,12,Aireez,Discontinued,-1.0,0.0,0.0,-142.8,1
+2024,12,Azliv,Discontinued,-172.0,0.0,-289.8628,-26925.797199999997,84
+2024,12,FREEDEP,Scitech,-2.0,0.0,0.0,-484.5,1
+2024,12,IBANDRO,Discontinued,-2.0,0.0,0.0,-892.5,2
+2024,12,MYOPRO,Discontinued,-2.0,0.0,0.0,-485.01,2
+2024,12,NEBULIZERS,Discontinued,-1.0,0.0,-1230.77,-5846.15,1
+2024,12,REKLAIM,Discontinued,-62.0,0.0,-75.19200000000001,-31004.167999999998,57
+2024,12,UFI,Discontinued,-3.0,0.0,0.0,-1368.5,2
+2025,1,AXIFER,Discontinued,-5.0,0.0,0.0,-5312.5,4
+2025,1,Azliv,Discontinued,-15.0,0.0,0.0,-2353.35,12
+2025,1,BONEDOL,Discontinued,-1.0,0.0,0.0,-127.5,1
+2025,1,CEFIPIME,Discontinued,-1.0,0.0,0.0,-510.0,1
+2025,1,IBANDRO,Discontinued,-2.0,0.0,0.0,-892.5,1
+2025,1,MFIT,Discontinued,-1.0,0.0,0.0,-1220.52,1
+2025,1,MYOPRO,Discontinued,-2.0,0.0,0.0,-485.01,2
+2025,1,NUVAL D,Discontinued,-1.0,0.0,0.0,-284.65,1
+2025,1,REKLAIM,Discontinued,-68.0,0.0,-75.19200000000001,-34011.848,49
+2025,1,WINZITH,Scitech,-1.0,0.0,0.0,-127.25,1
+2025,2,Azliv,Discontinued,-22.0,0.0,-36.0847,-3415.4953,5
+2025,2,Evo Joshanda,Falcons,-78.0,0.0,-1019.0463999999997,-38760.9536,134
+2025,2,FREEDEP,Scitech,-1.0,0.0,0.0,-229.5,1
+2025,2,IBANDRO,Discontinued,-1.0,0.0,0.0,-446.25,1
+2025,2,REKLAIM,Discontinued,-12.0,0.0,0.0,-6015.36,8
+2025,2,UFI,Discontinued,-2.0,0.0,0.0,-858.5,1
+2025,3,Aireez,Discontinued,-4.0,0.0,0.0,-571.2,3
+2025,3,Azliv,Discontinued,-24.0,-3.0,0.0,-3765.3599999999997,15
+2025,3,EvoCheck,Discontinued,-13.0,0.0,-2476.8,-72403.2,13
+2025,3,NEBULIZERS,Discontinued,-1.0,0.0,-1415.3855,-5661.5345,1
+2025,3,REKLAIM,Discontinued,-10.0,0.0,-125.32,-4887.48,5
+2025,4,Azliv,Discontinued,-1.0,0.0,0.0,-156.89,1
+2025,4,Evo Joshanda,Falcons,-133.0,0.0,-12985.143100000001,-54844.8569,51
+2025,4,EvoCheck,Discontinued,-14.0,0.0,-6225.2292,-74414.7708,22
+2025,4,FREEDEP,Scitech,-2.0,0.0,0.0,-484.5,2
+2025,4,Ferfer Gro,Gladiators,-38.0,0.0,-17.436,-15992.724,48
+2025,4,NEBULIZERS,Discontinued,-1.0,0.0,-1415.3855,-5661.5345,1
+2025,4,Oxivort,Discontinued,-42.0,0.0,-1598.35275,-51416.14725,426
+2025,5,EvoCheck,Discontinued,-12.0,0.0,-8931.692,-60188.308,10
+2025,5,FREEDEP,Scitech,-4.0,0.0,0.0,-969.0,2
+2025,5,Ferfer Gro,Gladiators,-48.0,0.0,-56.080799999999996,-20167.2792,73
+2025,5,Ivadin,Discontinued,-356.0,0.0,-340.0,-126752.0,374
+2025,5,Oxivort,Discontinued,-757.0,0.0,-2583.99114,-336757.25886,517
+2025,5,REKLAIM,Discontinued,-2.0,0.0,0.0,-1002.56,2
+2025,6,Evo Joshanda,Falcons,-51.0,0.0,-3254.5760999999998,-22755.423899999998,43
+2025,6,EvoCheck,Discontinued,-97.0,0.0,-28685.538399999998,-530034.4616,17
+2025,6,FREEDEP,Scitech,-4.0,0.0,0.0,-1020.0,2
+2025,6,Ferfer Gro,Gladiators,-39.0,0.0,-21.066,-16410.414,49
+2025,6,Ivadin,Discontinued,-33.0,0.0,-39.10000000000001,-11741.900000000001,123
+2025,6,NUVAL D,Discontinued,-8.0,0.0,0.0,-1584.16,4
+2025,6,Oxivort,Discontinued,-58.0,0.0,-328.95,-26369.55,166
+2025,6,SETSPIN,Discontinued,-1.0,0.0,0.0,-223.92,1
+2025,7,Aircare,Thunder,-3.0,0.0,0.0,-1307.6999999999998,2
+2025,7,Azliv,Discontinued,-1.0,0.0,0.0,-156.89,1
+2025,7,Evo Joshanda,Falcons,-248.0,-10.0,-19530.9201,-106949.0799,43
+2025,7,EvoCheck,Discontinued,-83.0,0.0,-45764.3071,-432315.6929,34
+2025,7,FREEDEP,Scitech,-2.0,0.0,0.0,-484.5,1
+2025,7,Ferfer Gro,Gladiators,-62.0,0.0,-210.66,-25911.18,56
+2025,7,Ivadin,Discontinued,-274.0,0.0,-218.025,-97599.975,256
+2025,7,NEBULIZERS,Discontinued,-2.0,0.0,0.0,-14153.84,1
+2025,7,NUVAL D,Discontinued,-4.0,0.0,0.0,-792.08,1
+2025,7,Oxivort,Discontinued,-118.0,0.0,-75.735,-42177.765,120
+2025,8,EvoCheck,Discontinued,-54.0,0.0,-39304.6132,-271735.3868,20
+2025,8,Ferfer Gro,Gladiators,-38.0,0.0,-55.938100000000006,-15954.221899999999,43
+2025,8,Ivadin,Discontinued,-51.0,0.0,-359.54999999999995,-17847.45,70
+2025,8,Oxivort,Discontinued,-624.0,0.0,-1593.7500000000002,-214238.25,278
+2025,8,SETSPIN,Discontinued,-1.0,0.0,0.0,-309.22,1
+2025,9,Aircare,Thunder,-5.0,0.0,0.0,-2179.5,5
+2025,9,Evo Joshanda,Falcons,-343.0,-18.0,-4307.3325,-170622.6675,51
+2025,9,EvoCheck,Discontinued,-19.0,0.0,-2880.0,-106560.0,9
+2025,9,FREEDEP,Scitech,-1.0,0.0,0.0,-255.0,1
+2025,9,Ferfer Gro,Gladiators,-62.0,0.0,0.0,-26121.84,50
+2025,9,Ivadin,Discontinued,-38.0,0.0,-197.625,-13368.375,44
+2025,9,Oxivort,Discontinued,-49.0,0.0,-86.0625,-16782.1875,40
+2025,9,UFI,Discontinued,-4.0,0.0,0.0,-1717.0,1
+2025,10,Aircare,Thunder,-121.0,0.0,-680.0039999999999,-52063.89599999999,75
+2025,10,Aireez,Discontinued,-1.0,0.0,0.0,-142.8,1
+2025,10,ESMART,Discontinued,-1.0,0.0,0.0,-218.59,1
+2025,10,EVOCIN,Scitech,-5.0,0.0,0.0,-765.0,1
+2025,10,EvoCheck,Discontinued,-8.0,0.0,-2304.0,-43776.0,10
+2025,10,Ferfer Gro,Gladiators,-57.0,0.0,-72.2076,-23943.0324,54
+2025,10,Ivadin,Discontinued,-61.0,0.0,-470.98499999999996,-21306.015,53
+2025,10,Oxivort,Discontinued,-35.0,0.0,0.0,-12864.75,16
+2025,10,SPEDICAM,Discontinued,-1.0,0.0,-6.354,-120.726,1
+2025,11,Aircare,Thunder,-23.0,0.0,-65.385,-9960.315,19
+2025,11,Aireez,Discontinued,-1.0,0.0,0.0,-142.8,1
+2025,11,Azliv,Discontinued,-1.0,0.0,0.0,-156.89,1
+2025,11,Evo Joshanda,Falcons,-245.0,0.0,-17975.4463,-106974.5537,109
+2025,11,EvoCheck,Discontinued,-33.0,0.0,-14976.0,-175104.0,13
+2025,11,Evofix,Conqueror,-180.0,279.0,-3496.8915,-43734.2085,416
+2025,11,Ferfer Gro,Gladiators,-53.0,0.0,-21.066,-22308.894,49
+2025,11,Ivadin,Discontinued,-85.0,0.0,-50.49,-30294.51,83
+2025,11,NUVAL D,Discontinued,-2.0,0.0,0.0,-396.04,1
+2025,11,Oxivort,Discontinued,-13.0,0.0,-29.75,-4445.5,10
+2025,11,REKLAIM,Discontinued,-4.0,0.0,-100.256,-1904.864,1
+2025,12,Aircare,Thunder,-3.0,0.0,0.0,-1307.6999999999998,7
+2025,12,Aireez,Discontinued,-5.0,0.0,0.0,-714.0,1
+2025,12,CEFIPIME,Discontinued,-1.0,0.0,0.0,-510.0,1
+2025,12,Evo Joshanda,Falcons,-60.0,0.0,-4919.2101,-25680.7899,46
+2025,12,EvoCheck,Discontinued,-8.0,0.0,-3571.9384,-42508.0616,8
+2025,12,Evofix,Conqueror,-92.0,0.0,-288.915,-22579.485,325
+2025,12,Ferfer Gro,Gladiators,-54.0,0.0,-63.19799999999999,-22688.082,55
+2025,12,IBANDRO,Discontinued,-1.0,0.0,-22.3125,-423.9375,1
+2025,12,Ivadin,Discontinued,-561.0,0.0,-608.175,-199668.825,360
+2025,12,Oxivort,Discontinued,-11.0,0.0,0.0,-3990.75,4
+2025,12,Stevo,Falcons,-240.0,26.0,-2535.1351999999997,-94608.3048,713
+2026,1,Evo Joshanda,Falcons,-169.0,0.0,-15759.885699999999,-70430.1143,20
+2026,1,EvoCheck,Discontinued,-7.0,0.0,-2304.0,-38016.0,14
+2026,1,Evofix,Conqueror,-456.0,-3.0,-1976.9597,-118158.6403,335
+2026,1,Ferfer Gro,Gladiators,-71.0,0.0,-94.44,-29819.28,75
+2026,1,Ivadin,Discontinued,-469.0,0.0,-327.93,-167105.07,319
+2026,1,NEBULIZERS,Discontinued,-3.0,0.0,-4246.152,-16984.608,1
+2026,1,Oxivort,Discontinued,-8.0,0.0,-59.5,-2898.5,5
+2026,1,REKLAIM,Discontinued,-1.0,0.0,-25.0639,-476.2161,1
+2026,1,Stevo,Falcons,-2770.0,21.0,-63464.627799999995,-1097887.4522,1326
+2026,2,Aircare,Thunder,-1.0,0.0,0.0,-435.9,1
+2026,2,Azliv,Discontinued,-1.0,0.0,0.0,-233.75,1
+2026,2,Evo Joshanda,Falcons,-59.0,0.0,-5532.1984,-24557.8016,12
+2026,2,Evofix,Conqueror,-171.0,-1.0,-635.205,-42763.245,139
+2026,2,FREEDEP,Scitech,-2.0,0.0,0.0,-459.0,1
+2026,2,Ferfer Gro,Gladiators,-13.0,0.0,0.0,-5477.16,21
+2026,2,Ivadin,Discontinued,-234.0,0.0,-320.025,-83217.975,182
+2026,2,Oxivort,Discontinued,-4.0,0.0,0.0,-1581.0,2
+2026,2,REKLAIM,Discontinued,-2.0,0.0,0.0,-1002.56,1
+2026,2,Stevo,Falcons,-852.0,10.0,-11314.9308,-364797.7892,834
+2026,3,Evofix,Conqueror,-104.0,-1.0,0.0,-25851.9,34
+2026,3,Ferfer Gro,Gladiators,-7.0,0.0,0.0,-2949.24,4
+2026,3,Ivadin,Discontinued,-6.0,0.0,0.0,-2142.0,10
+2026,3,Stevo,Falcons,-126.0,1.0,-1722.1876,-54199.892400000004,91
