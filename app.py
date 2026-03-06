@@ -40,11 +40,12 @@ st.markdown("""
 
 @st.cache_data
 def load_data():
-    ds = pd.read_csv("data/processed/sales_clean.csv")
-    da = pd.read_csv("data/processed/activities_clean.csv")
-    dm = pd.read_csv("data/processed/merged_analysis.csv")
-    dr = pd.read_csv("data/processed/roi_analysis.csv")
-    with open("data/processed/kpis.json") as f:
+    base = "data/processed" if os.path.exists("data/processed/sales_clean.csv") else "."
+    ds = pd.read_csv(f"{base}/sales_clean.csv")
+    da = pd.read_csv(f"{base}/activities_clean.csv")
+    dm = pd.read_csv(f"{base}/merged_analysis.csv")
+    dr = pd.read_csv(f"{base}/roi_analysis.csv")
+    with open(f"{base}/kpis.json") as f:
         kpis = json.load(f)
     ds["Date"] = pd.to_datetime(ds["Date"])
     da["Date"] = pd.to_datetime(da["Date"])
