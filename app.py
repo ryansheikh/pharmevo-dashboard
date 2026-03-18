@@ -2796,9 +2796,8 @@ elif page == "🎯 Strategic Growth Plan":
         df_zr["Material Name"] = df_zr["Material Name"].str[:40]
         df_zr["SDP Name"]      = df_zr["SDP Name"].str[:30]
         st.dataframe(
-            df_zr[["Material Name","SDP Name","ShelfLifeDays",
-                   "Revenue","Risk"]].rename(columns={
-                "ShelfLifeDays":"Days Left","Revenue":"Revenue"}),
+            df_zr[["Material Name","SDP Name","ShelfLifeDays","Risk"]].rename(
+            columns={"ShelfLifeDays":"Days Left"}),
             use_container_width=True, hide_index=True)
     st.markdown(warn("Contact all 20 distributors immediately. Offer exchange or return for near-expiry products. Investigate root cause — is manufacturing date too close to delivery?"), unsafe_allow_html=True)
 
