@@ -2034,15 +2034,14 @@ elif page == "📦 Distribution Analysis":
             "Material Name","SDP Name","Billing date",
             "ShelfLifeDays"]].copy()
         risk_display["Revenue"] = "N/A"
+        risk_display["Days Left"] = risk_display["ShelfLifeDays"].astype(int)
+        risk_display["Risk Level"] = risk_display["ShelfLifeDays"].apply(
+            lambda x: "🔴 CRITICAL" if x<30 else "🟡 WARNING")
         risk_display["Material Name"] = risk_display["Material Name"].str[:40]
         risk_display["SDP Name"]      = risk_display["SDP Name"].str[:35]
-        risk_display["Revenue"]       = risk_display["Revenue"].apply(fmt)
-        risk_display["Days Left"]     = risk_display["ShelfLifeDays"].astype(int)
-        risk_display["Risk Level"]    = risk_display["ShelfLifeDays"].apply(
-            lambda x: "🔴 CRITICAL" if x<30 else "🟡 WARNING")
         st.dataframe(
             risk_display[["Material Name","SDP Name","Billing date",
-                          "Days Left","Revenue","Risk Level"]],
+                          "Days Left","Risk Level"]],
             use_container_width=True, hide_index=True)
         st.markdown(danger("Action Required: Contact distributors for these 20 items. Arrange returns or promotions to clear near-expiry stock before it becomes a loss."), unsafe_allow_html=True)
     else:
