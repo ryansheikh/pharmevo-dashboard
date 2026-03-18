@@ -1809,9 +1809,6 @@ elif page == "📦 Distribution Analysis":
     @st.cache_data
     def load_zsdcy():
         df   = pd.read_csv("zsdcy_clean.csv")
-        df["Billing date"]         = pd.to_datetime(df["Billing date"])
-        df["Date of Manufacture"]  = pd.to_datetime(df["Date of Manufacture"])
-        df["Shelf Life Expiratio"] = pd.to_datetime(df["Shelf Life Expiratio"])
         prod = pd.read_csv("zsdcy_products.csv")
         city = pd.read_csv("zsdcy_cities.csv")
         sdp  = pd.read_csv("zsdcy_sdp.csv")
@@ -2972,7 +2969,6 @@ elif page == "🔬 Marketing Intelligence":
     @st.cache_data
     def load_marketing_data():
         df = pd.read_csv("zsdcy_clean.csv")
-        df["Billing date"] = pd.to_datetime(df["Billing date"])
         def extract_city(sdp):
             try:
                 parts = str(sdp).split("-")
