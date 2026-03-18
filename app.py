@@ -2032,7 +2032,8 @@ elif page == "📦 Distribution Analysis":
     if len(df_zrisk) > 0:
         risk_display = df_zrisk[[
             "Material Name","SDP Name","Billing date",
-            "ShelfLifeDays","Revenue"]].copy()
+            "ShelfLifeDays"]].copy()
+        risk_display["Revenue"] = "N/A"
         risk_display["Material Name"] = risk_display["Material Name"].str[:40]
         risk_display["SDP Name"]      = risk_display["SDP Name"].str[:35]
         risk_display["Revenue"]       = risk_display["Revenue"].apply(fmt)
