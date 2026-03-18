@@ -1819,13 +1819,13 @@ elif page == "📦 Distribution Analysis":
     df_z, df_zprod, df_zcity, df_zsdp, df_zgrow, df_zrisk = load_zsdcy()
 
     # KPIs
-    total_rev_z  = df_z["LineRevenue"].sum()
-    total_qty_z  = df_z["Billing Quantity"].sum()
+    total_rev_z  = df_z["Revenue"].sum()
+    total_qty_z  = df_z["Qty"].sum()
     total_cities = df_zcity["City"].nunique()
     total_sdps   = df_zsdp["SDP Name"].nunique()
     total_prods  = df_zprod["Material Name"].nunique()
-    rev24_z      = df_z[df_z["Yr"]==2024]["LineRevenue"].sum()
-    rev25_z      = df_z[df_z["Yr"]==2025]["LineRevenue"].sum()
+    rev24_z      = df_z[df_z["Yr"]==2024]["Revenue"].sum()
+    rev25_z      = df_z[df_z["Yr"]==2025]["Revenue"].sum()
     growth_z     = ((rev25_z-rev24_z)/rev24_z*100) if rev24_z>0 else 0
 
     c1,c2,c3,c4,c5 = st.columns(5)
@@ -1850,12 +1850,12 @@ elif page == "📦 Distribution Analysis":
 
     col1, col2 = st.columns(2)
     with col1:
-        cat_rev = df_z.groupby("Category")["LineRevenue"].sum().reset_index()
-        cat_rev["Label"] = cat_rev["LineRevenue"].apply(fmt)
-        cat_rev = cat_rev.sort_values("LineRevenue", ascending=False)
-        fig = px.bar(cat_rev, x="LineRevenue", y="Category",
+        cat_rev = df_z.groupby("Category")["Revenue"].sum().reset_index()
+        cat_rev["Label"] = cat_rev["Revenue"].apply(fmt)
+        cat_rev = cat_rev.sort_values("Revenue", ascending=False)
+        fig = px.bar(cat_rev, x="Revenue", y="Category",
                      orientation="h", text="Label",
-                     color="LineRevenue", color_continuous_scale="Blues")
+                     color="Revenue", color_continuous_scale="Blues")
         fig.update_traces(textposition="outside", textfont_size=11)
         apply_layout(fig, height=300,
                      yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
@@ -1864,7 +1864,7 @@ elif page == "📦 Distribution Analysis":
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        fig = px.pie(cat_rev, values="LineRevenue", names="Category",
+        fig = px.pie(cat_rev, values="Revenue", names="Category",
                      color_discrete_sequence=px.colors.qualitative.Set2)
         fig.update_traces(textinfo="percent+label", textfont_size=11)
         apply_layout(fig, height=300)
@@ -1876,24 +1876,24 @@ elif page == "📦 Distribution Analysis":
 
     mo_map = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
               7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
-    monthly_z = df_z.groupby(["Yr","Mo"])["LineRevenue"].sum().reset_index()
+    monthly_z = df_z.groupby(["Yr","Mo"])["Revenue"].sum().reset_index()
     monthly_z["Date"]  = pd.to_datetime(
         monthly_z["Yr"].astype(int).astype(str)+"-"+
         monthly_z["Mo"].astype(int).astype(str)+"-01")
-    monthly_z["Label"] = monthly_z["LineRevenue"].apply(fmt)
+    monthly_z["Label"] = monthly_z["Revenue"].apply(fmt)
 
     complete_z = monthly_z[monthly_z["Yr"]==2024]
     y2025_z    = monthly_z[monthly_z["Yr"]==2025]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=complete_z["Date"], y=complete_z["LineRevenue"]/1e6,
+        x=complete_z["Date"], y=complete_z["Revenue"]/1e6,
         name="2024", marker_color="rgba(44,95,138,0.7)",
         text=complete_z["Label"], textposition="outside",
         textfont_size=9
     ))
     fig.add_trace(go.Bar(
-        x=y2025_z["Date"], y=y2025_z["LineRevenue"]/1e6,
+        x=y2025_z["Date"], y=y2025_z["Revenue"]/1e6,
         name="2025", marker_color="rgba(46,125,50,0.7)",
         text=y2025_z["Label"], textposition="outside",
         textfont_size=9
@@ -1910,8 +1910,8 @@ elif page == "📦 Distribution Analysis":
         st.markdown(sec("🏆 Top 20 Products by Revenue (SKU Level)"), unsafe_allow_html=True)
         st.markdown(note("These are at SKU level — same product in different dosages counts separately. Inosita Plus leads at PKR 689M across all dosages."), unsafe_allow_html=True)
         top20_z = df_z.groupby("Material Name").agg(
-            Revenue=("LineRevenue","sum"),
-            Qty=("Billing Quantity","sum")).reset_index().nlargest(20,"Revenue")
+            Revenue=("Revenue","sum"),
+            Qty=("Qty","sum")).reset_index().nlargest(20,"Revenue")
         top20_z["Label"] = top20_z["Revenue"].apply(fmt)
         top20_z["ShortName"] = top20_z["Material Name"].str[:35]
         fig = px.bar(top20_z, x="Revenue", y="ShortName",
@@ -2032,10 +2032,10 @@ elif page == "📦 Distribution Analysis":
     if len(df_zrisk) > 0:
         risk_display = df_zrisk[[
             "Material Name","SDP Name","Billing date",
-            "ShelfLifeDays","LineRevenue"]].copy()
+            "ShelfLifeDays","Revenue"]].copy()
         risk_display["Material Name"] = risk_display["Material Name"].str[:40]
         risk_display["SDP Name"]      = risk_display["SDP Name"].str[:35]
-        risk_display["Revenue"]       = risk_display["LineRevenue"].apply(fmt)
+        risk_display["Revenue"]       = risk_display["Revenue"].apply(fmt)
         risk_display["Days Left"]     = risk_display["ShelfLifeDays"].astype(int)
         risk_display["Risk Level"]    = risk_display["ShelfLifeDays"].apply(
             lambda x: "🔴 CRITICAL" if x<30 else "🟡 WARNING")
@@ -2056,7 +2056,7 @@ elif page == "📦 Distribution Analysis":
                        "Cities Covered","Total Invoices","Avg Monthly Revenue"],
         "2024"      : [
             fmt(rev24_z),
-            fmt_num(df_z[df_z["Yr"]==2024]["Billing Quantity"].sum()),
+            fmt_num(df_z[df_z["Yr"]==2024]["Qty"].sum()),
             str(df_z[df_z["Yr"]==2024]["Material Name"].nunique()),
             str(df_zcity[df_zcity["Yr"]==2024]["City"].nunique()),
             f"{len(df_z[df_z['Yr']==2024]):,}",
@@ -2064,7 +2064,7 @@ elif page == "📦 Distribution Analysis":
         ],
         "2025"      : [
             fmt(rev25_z),
-            fmt_num(df_z[df_z["Yr"]==2025]["Billing Quantity"].sum()),
+            fmt_num(df_z[df_z["Yr"]==2025]["Qty"].sum()),
             str(df_z[df_z["Yr"]==2025]["Material Name"].nunique()),
             str(df_zcity[df_zcity["Yr"]==2025]["City"].nunique()),
             f"{len(df_z[df_z['Yr']==2025]):,}",
@@ -2797,8 +2797,8 @@ elif page == "🎯 Strategic Growth Plan":
         df_zr["SDP Name"]      = df_zr["SDP Name"].str[:30]
         st.dataframe(
             df_zr[["Material Name","SDP Name","ShelfLifeDays",
-                   "LineRevenue","Risk"]].rename(columns={
-                "ShelfLifeDays":"Days Left","LineRevenue":"Revenue"}),
+                   "Revenue","Risk"]].rename(columns={
+                "ShelfLifeDays":"Days Left","Revenue":"Revenue"}),
             use_container_width=True, hide_index=True)
     st.markdown(warn("Contact all 20 distributors immediately. Offer exchange or return for near-expiry products. Investigate root cause — is manufacturing date too close to delivery?"), unsafe_allow_html=True)
 
@@ -3006,9 +3006,9 @@ elif page == "🔬 Marketing Intelligence":
 
     col1, col2 = st.columns(2)
     with col1:
-        price_df = df_mkt[df_mkt["Net Price"]>0].groupby("Material Name").agg(
-            AvgPrice=("Net Price","mean"),
-            Revenue=("LineRevenue","sum")).reset_index()
+        price_df = df_mkt[df_mkt["AvgPrice"]>0].groupby("Material Name").agg(
+            AvgPrice=("AvgPrice","mean"),
+            Revenue=("Revenue","sum")).reset_index()
         price_df = price_df[price_df["Revenue"]>10e6].nlargest(15,"AvgPrice")
         price_df["ShortName"] = price_df["Material Name"].str[:35]
         price_df["Label"]     = price_df["AvgPrice"].apply(lambda x: f"PKR {x:,.0f}")
@@ -3024,10 +3024,10 @@ elif page == "🔬 Marketing Intelligence":
 
     with col2:
         st.markdown("**Price Trend 2024 vs 2025**")
-        price_yr = df_mkt[df_mkt["Net Price"]>0].groupby(
-            ["Yr","Material Name"])["Net Price"].mean().reset_index()
-        price_yr24 = price_yr[price_yr["Yr"]==2024].set_index("Material Name")["Net Price"]
-        price_yr25 = price_yr[price_yr["Yr"]==2025].set_index("Material Name")["Net Price"]
+        price_yr = df_mkt[df_mkt["AvgPrice"]>0].groupby(
+            ["Yr","Material Name"])["AvgPrice"].mean().reset_index()
+        price_yr24 = price_yr[price_yr["Yr"]==2024].set_index("Material Name")["AvgPrice"]
+        price_yr25 = price_yr[price_yr["Yr"]==2025].set_index("Material Name")["AvgPrice"]
         price_chg  = pd.DataFrame({"2024":price_yr24,"2025":price_yr25}).dropna()
         price_chg["Change"] = ((price_chg["2025"]-price_chg["2024"])/
                                 price_chg["2024"]*100)
@@ -3068,13 +3068,13 @@ elif page == "🔬 Marketing Intelligence":
             "Revenue":[
                 df_mkt[df_mkt["SDP Name"].isin(
                     set(df_mkt[df_mkt["Yr"]==2024]["SDP Name"]) &
-                    set(df_mkt[df_mkt["Yr"]==2025]["SDP Name"]))]["LineRevenue"].sum(),
+                    set(df_mkt[df_mkt["Yr"]==2025]["SDP Name"]))]["Revenue"].sum(),
                 df_mkt[df_mkt["SDP Name"].isin(
                     set(df_mkt[df_mkt["Yr"]==2025]["SDP Name"]) -
-                    set(df_mkt[df_mkt["Yr"]==2024]["SDP Name"]))]["LineRevenue"].sum(),
+                    set(df_mkt[df_mkt["Yr"]==2024]["SDP Name"]))]["Revenue"].sum(),
                 df_mkt[df_mkt["SDP Name"].isin(
                     set(df_mkt[df_mkt["Yr"]==2024]["SDP Name"]) -
-                    set(df_mkt[df_mkt["Yr"]==2025]["SDP Name"]))]["LineRevenue"].sum()
+                    set(df_mkt[df_mkt["Yr"]==2025]["SDP Name"]))]["Revenue"].sum()
             ]
         })
         loyalty_data["RevLabel"] = loyalty_data["Revenue"].apply(fmt)
@@ -3128,9 +3128,9 @@ elif page == "🔬 Marketing Intelligence":
     st.markdown(note("Sales velocity = units sold per month. High velocity = product in strong demand = protect with adequate supply. Low velocity = potential deadstock risk = review promotion strategy."), unsafe_allow_html=True)
 
     velocity = df_mkt.groupby("Material Name").agg(
-        TotalQty=("Billing Quantity","sum"),
+        TotalQty=("Qty","sum"),
         Months=("Mo","nunique"),
-        Revenue=("LineRevenue","sum")).reset_index()
+        Revenue=("Revenue","sum")).reset_index()
     velocity = velocity[velocity["Revenue"]>10e6]
     velocity["QtyPerMonth"] = velocity["TotalQty"]/velocity["Months"]
 
@@ -3177,8 +3177,8 @@ elif page == "🔬 Marketing Intelligence":
     new_prod_df  = df_mkt[
         (df_mkt["Material Name"].isin(new_prods)) &
         (df_mkt["Yr"]==2025)].groupby("Material Name").agg(
-        Revenue=("LineRevenue","sum"),
-        Qty=("Billing Quantity","sum"),
+        Revenue=("Revenue","sum"),
+        Qty=("Qty","sum"),
         Cities=("City","nunique")).reset_index()
     new_prod_df  = new_prod_df[new_prod_df["Revenue"]>1e6].nlargest(20,"Revenue")
     new_prod_df["ShortName"] = new_prod_df["Material Name"].str[:35]
@@ -3236,9 +3236,9 @@ elif page == "🔬 Marketing Intelligence":
     st.markdown(sec("🔄 Insight 5 — Product Life Cycle Analysis"), unsafe_allow_html=True)
     st.markdown(note("202 products are growing (invest more!). 484 are stable (maintain). 128 are critical (declining >30%). 13 are warning (declining 10-30%). Critical products need urgent marketing intervention or discontinuation."), unsafe_allow_html=True)
 
-    plc = df_mkt.groupby(["Material Name","Yr"])["LineRevenue"].sum().reset_index()
+    plc = df_mkt.groupby(["Material Name","Yr"])["Revenue"].sum().reset_index()
     plc_pivot = plc.pivot(index="Material Name", columns="Yr",
-                           values="LineRevenue").fillna(0)
+                           values="Revenue").fillna(0)
     plc_pivot["Growth"] = ((plc_pivot[2025]-plc_pivot[2024])/
                             plc_pivot[2024].replace(0,1)*100)
     plc_pivot["Status"] = plc_pivot["Growth"].apply(
@@ -3296,7 +3296,7 @@ elif page == "🔬 Marketing Intelligence":
 
     col1, col2 = st.columns(2)
     with col1:
-        city_rev   = df_mkt.groupby("City")["LineRevenue"].sum()
+        city_rev   = df_mkt.groupby("City")["Revenue"].sum()
         total_cr   = city_rev.sum()
         city_share = (city_rev/total_cr*100).nlargest(15).reset_index()
         city_share.columns = ["City","Share"]
@@ -3349,7 +3349,7 @@ elif page == "🔬 Marketing Intelligence":
 
     freq = df_mkt.groupby("SDP Name").agg(
         OrderMonths=("Mo","nunique"),
-        Revenue=("LineRevenue","sum"),
+        Revenue=("Revenue","sum"),
         Products=("Material Name","nunique")).reset_index()
     freq12 = freq[freq["OrderMonths"]==12].sort_values("Revenue",ascending=False)
     freq12["ShortName"] = freq12["SDP Name"].str[:35]
@@ -3403,9 +3403,9 @@ elif page == "🔬 Marketing Intelligence":
     st.markdown(sec("⚠️ Insight 8 — Distributor Concentration Risk"), unsafe_allow_html=True)
     st.markdown(note("Only 46 distributors (out of 295) generate 80% of all revenue. Top 5 distributors = 16.3% of revenue. This concentration is better than product concentration but still needs monitoring."), unsafe_allow_html=True)
 
-    dist_rev = df_mkt.groupby("SDP Name")["LineRevenue"].sum().sort_values(ascending=False).reset_index()
-    dist_rev["CumPct"] = dist_rev["LineRevenue"].cumsum()/dist_rev["LineRevenue"].sum()*100
-    dist_rev["Label"]  = dist_rev["LineRevenue"].apply(fmt)
+    dist_rev = df_mkt.groupby("SDP Name")["Revenue"].sum().sort_values(ascending=False).reset_index()
+    dist_rev["CumPct"] = dist_rev["Revenue"].cumsum()/dist_rev["Revenue"].sum()*100
+    dist_rev["Label"]  = dist_rev["Revenue"].apply(fmt)
     dist_rev["ShortName"] = dist_rev["SDP Name"].str[:30]
 
     col1, col2 = st.columns(2)
@@ -3413,7 +3413,7 @@ elif page == "🔬 Marketing Intelligence":
         top20_dist = dist_rev.head(20)
         fig = go.Figure()
         fig.add_trace(go.Bar(
-            x=top20_dist["LineRevenue"]/1e6,
+            x=top20_dist["Revenue"]/1e6,
             y=top20_dist["ShortName"],
             orientation="h", name="Revenue (M PKR)",
             marker_color="#2c5f8a",
@@ -3446,9 +3446,9 @@ elif page == "🔬 Marketing Intelligence":
     st.markdown(sec("📊 Insight 9 — Category Growth Analysis"), unsafe_allow_html=True)
     st.markdown(note("Pharma is 86.3% of revenue but which category is growing FASTEST? This tells marketing where to invest for future growth."), unsafe_allow_html=True)
 
-    cat_yr = df_mkt.groupby(["Category","Yr"])["LineRevenue"].sum().reset_index()
+    cat_yr = df_mkt.groupby(["Category","Yr"])["Revenue"].sum().reset_index()
     cat_pivot = cat_yr.pivot(index="Category", columns="Yr",
-                              values="LineRevenue").fillna(0)
+                              values="Revenue").fillna(0)
     if 2024 in cat_pivot.columns and 2025 in cat_pivot.columns:
         cat_pivot["Growth"] = ((cat_pivot[2025]-cat_pivot[2024])/
                                 cat_pivot[2024].replace(0,1)*100)
