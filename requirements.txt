@@ -3,3 +3,7 @@ pandas
 plotly
 scikit-learn
 numpy
+scipy
+openpyxl
+pyodbc
+pickle5
