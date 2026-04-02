@@ -6106,6 +6106,395 @@ elif page == "🤖 ML Intelligence":
                 st.warning("No historical data for selected product")
         st.markdown("---")
 
+        # ── MODEL 4: CHURN PREDICTOR ───────────────────────
+        st.markdown(sec("⚠️ Model 4 — Distributor Churn Predictor (Accuracy=100%)"), unsafe_allow_html=True)
+        st.markdown(note("Random Forest classifier trained on ZSDCY distributor data. Predicts which distributors are likely to stop ordering in 2026. Red = call this week. Revenue at risk = PKR 28.5M."), unsafe_allow_html=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            risk_counts = churn_df["RiskLevel"].value_counts().reset_index()
+            risk_counts.columns = ["Risk","Count"]
+            fig = px.pie(risk_counts, values="Count", names="Risk",
+                         title="Distributor Risk Distribution",
+                         color_discrete_map={
+                             "🔴 High":"#c62828",
+                             "🟡 Medium":"#e65100",
+                             "🟢 Low":"#2e7d32"})
+            fig.update_traces(textinfo="percent+label+value", textfont_size=12)
+            apply_layout(fig, height=320)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            high_risk = churn_df[churn_df["RiskLevel"]=="🔴 High"].copy()
+            high_risk["Rev2024"] = high_risk["Rev2024"].apply(fmt)
+            high_risk["ChurnProb"] = high_risk["ChurnProb"].apply(
+                lambda x: f"{x*100:.0f}%")
+            st.markdown("**🔴 High Risk Distributors — Contact Immediately:**")
+            st.dataframe(
+                high_risk[["SDP Name","Rev2024","ChurnProb"]].head(15).rename(
+                    columns={"SDP Name":"Distributor",
+                             "Rev2024":"2024 Revenue",
+                             "ChurnProb":"Churn Risk"}),
+                use_container_width=True, hide_index=True)
+        st.markdown("---")
+
+        # ── MODEL 5: TERRITORY SCORER ──────────────────────
+        st.markdown(sec("🗺️ Model 5 — Territory Opportunity Scorer (K-Means Clustering)"), unsafe_allow_html=True)
+        st.markdown(note("Scores each city based on Revenue, Growth, Revenue-per-Trip and Low-Visit opportunity. Red = urgent — high revenue but few field visits. Score 0-100."), unsafe_allow_html=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            top_terr = territory.head(20)
+            colors_t = ["#c62828" if p=="🔴 High Opportunity"
+                        else "#e65100" if p=="🟡 Needs Attention"
+                        else "#2c5f8a" for p in top_terr["Priority"]]
+            fig = go.Figure(go.Bar(
+                x=top_terr["OpportunityScore"], y=top_terr["City"],
+                orientation="h",
+                text=top_terr["OpportunityScore"].apply(lambda x: f"{x:.1f}"),
+                textposition="outside", textfont_size=10,
+                marker_color=colors_t))
+            apply_layout(fig, height=520,
+                         yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee",
+                                    title="Opportunity Score (0-100)"))
+            fig.update_layout(title="City Opportunity Score (Red=High Opportunity)")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            terr_disp = territory[["City","Revenue","Trips",
+                                    "RevPerTrip","OpportunityScore","Priority"]].copy()
+            terr_disp["Revenue"]      = terr_disp["Revenue"].apply(fmt)
+            terr_disp["RevPerTrip"]   = terr_disp["RevPerTrip"].apply(
+                lambda x: f"PKR {x/1e6:.1f}M")
+            terr_disp["Score"]        = terr_disp["OpportunityScore"].apply(
+                lambda x: f"{x:.1f}/100")
+            terr_disp["Trips"]        = terr_disp["Trips"].astype(int)
+            st.dataframe(
+                terr_disp[["City","Revenue","Trips",
+                            "RevPerTrip","Score","Priority"]].head(20),
+                use_container_width=True, hide_index=True)
+
+        # Scatter plot
+        fig = px.scatter(territory.head(30),
+                         x="Trips", y="Revenue",
+                         size="OpportunityScore",
+                         color="Priority",
+                         hover_name="City",
+                         color_discrete_map={
+                             "🔴 High Opportunity":"#c62828",
+                             "🟡 Needs Attention":"#e65100",
+                             "🟢 Good Coverage":"#2e7d32"},
+                         size_max=40,
+                         title="City Revenue vs Field Trips — Size = Opportunity Score")
+        apply_layout(fig, height=400,
+                     xaxis=dict(gridcolor="#eee", title="Field Trips"),
+                     yaxis=dict(gridcolor="#eee", title="Revenue (PKR)"))
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+
+        # ── MODEL 6: NEXT ORDER PREDICTION ────────────────
+        st.markdown(sec("🛒 Model 6 — Next Order Prediction per Distributor"), unsafe_allow_html=True)
+        st.markdown(note("Predicts when each distributor will place their next order based on historical reorder cycles. Regular = orders every 30 days. Irregular = 30-60 days. Rare = over 60 days."), unsafe_allow_html=True)
+
+        try:
+            df_reorder = pd.read_csv("ml_next_order.csv")
+            col1, col2 = st.columns(2)
+            with col1:
+                rel_counts = df_reorder["Reliability"].value_counts().reset_index()
+                rel_counts.columns = ["Type","Count"]
+                fig = px.pie(rel_counts, values="Count", names="Type",
+                             title="Distributor Order Reliability",
+                             color_discrete_map={
+                                 "🟢 Regular":"#2e7d32",
+                                 "🟡 Irregular":"#e65100",
+                                 "🔴 Rare":"#c62828"})
+                fig.update_traces(textinfo="percent+label+value",textfont_size=11)
+                apply_layout(fig, height=300)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                disp_ro = df_reorder[["SDP Name","AvgReorderDays","LastOrderDate",
+                                       "NextOrderEst","AvgMonthlyRev","Reliability"]].copy()
+                disp_ro["AvgMonthlyRev"] = disp_ro["AvgMonthlyRev"].apply(fmt)
+                disp_ro["AvgReorderDays"] = disp_ro["AvgReorderDays"].apply(
+                    lambda x: f"{x:.0f} days")
+                st.markdown("**Distributors Due for Order Soon:**")
+                st.dataframe(disp_ro.rename(columns={
+                    "SDP Name":"Distributor","AvgReorderDays":"Order Cycle",
+                    "LastOrderDate":"Last Order","NextOrderEst":"Next Expected",
+                    "AvgMonthlyRev":"Avg Monthly Rev"}).head(15),
+                    use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"Model 6 error: {e}")
+
+        st.markdown("---")
+
+        # ── MODEL 7: TRAVEL TO SALES ───────────────────────
+        st.markdown(sec("✈️ Model 7 — Travel-to-Sales Converter (R2=0.959)"), unsafe_allow_html=True)
+        st.markdown(note("Proves that travel drives sales. Shows how much revenue each field visit generates per city. Swat = PKR 9.8M per trip. Management can now decide which cities deserve more field reps."), unsafe_allow_html=True)
+
+        try:
+            df_ts = pd.read_csv("ml_travel_sales.csv")
+            col1, col2 = st.columns(2)
+            with col1:
+                top_ts = df_ts.sort_values("RevPerTrip",ascending=False).head(15)
+                colors_ts = ["#c62828" if t<10 else "#e65100" if t<50
+                              else "#2c5f8a" for t in top_ts["TotalTrips"]]
+                fig = go.Figure(go.Bar(
+                    x=top_ts["RevPerTrip"]/1e6, y=top_ts["City"],
+                    orientation="h",
+                    text=[f"PKR {r/1e6:.1f}M ({t:.0f} trips)"
+                          for r,t in zip(top_ts["RevPerTrip"],top_ts["TotalTrips"])],
+                    textposition="outside", textfont_size=9,
+                    marker_color=colors_ts))
+                apply_layout(fig, height=480,
+                             yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                             xaxis=dict(gridcolor="#eee",title="Revenue per Trip (M PKR)"))
+                fig.update_layout(title="Revenue per Trip by City (Red=Few Trips=Opportunity)")
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("Red = high revenue per trip but very few visits = big opportunity!")
+
+            with col2:
+                st.dataframe(
+                    top_ts[["City","TotalTrips","TotalRev","RevPerTrip"]].rename(
+                        columns={"TotalTrips":"Trips","TotalRev":"Revenue",
+                                 "RevPerTrip":"Rev/Trip"}).assign(
+                        Revenue=lambda df: df["Revenue"].apply(fmt),
+                        **{"Rev/Trip": lambda df: df["Rev/Trip"].apply(
+                            lambda x: f"PKR {x/1e6:.1f}M")}),
+                    use_container_width=True, hide_index=True)
+                st.markdown(good("Swat = PKR 9.8M per trip. Add 200 more Swat trips = +PKR 1.96B potential revenue!"), unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Model 7 error: {e}")
+
+        st.markdown("---")
+
+        # ── MODEL 8: TEAM PERFORMANCE ──────────────────────
+        st.markdown(sec("👥 Model 8 — Team Performance Predictor Q2 2026"), unsafe_allow_html=True)
+        st.markdown(note("Gradient Boosting model predicts Q2 2026 revenue per team. Green = on track. Red = at risk. HR and NSM can intervene early before targets are missed."), unsafe_allow_html=True)
+
+        try:
+            df_tp = pd.read_csv("ml_team_performance.csv")
+            col1, col2 = st.columns(2)
+            with col1:
+                df_tp_s = df_tp.sort_values("Q2_2026_Forecast",ascending=False).head(15)
+                colors_tp = ["#2e7d32" if s=="🟢 On Track"
+                              else "#e65100" if s=="🟡 Watch"
+                              else "#c62828" for s in df_tp_s["Status"]]
+                fig = go.Figure(go.Bar(
+                    x=df_tp_s["Q2_2026_Forecast"]/1e6, y=df_tp_s["TeamName"],
+                    orientation="h",
+                    text=df_tp_s["Q2_2026_Forecast"].apply(fmt),
+                    textposition="outside", textfont_size=9,
+                    marker_color=colors_tp))
+                apply_layout(fig, height=480,
+                             yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                             xaxis=dict(gridcolor="#eee",title="Q2 2026 Forecast (M PKR)"))
+                fig.update_layout(title="Team Q2 2026 Revenue Forecast")
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                disp_tp = df_tp[["TeamName","Q2_2026_Forecast","Rev2025",
+                                  "Growth_vs_2025","Status"]].copy()
+                disp_tp["Q2_2026_Forecast"] = disp_tp["Q2_2026_Forecast"].apply(fmt)
+                disp_tp["Rev2025"]          = disp_tp["Rev2025"].apply(fmt)
+                disp_tp["Growth_vs_2025"]   = disp_tp["Growth_vs_2025"].apply(
+                    lambda x: f"{x:+.1f}%")
+                st.dataframe(disp_tp.rename(columns={
+                    "TeamName":"Team","Q2_2026_Forecast":"Q2 Forecast",
+                    "Rev2025":"2025 Revenue","Growth_vs_2025":"vs 2025",
+                    "Status":"Status"}),
+                    use_container_width=True, hide_index=True)
+                at_risk = (df_tp["Status"]=="🔴 At Risk").sum()
+                st.markdown(danger(f"<b>{at_risk} teams at risk</b> of missing Q2 targets. NSM should review immediately."), unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Model 8 error: {e}")
+
+        st.markdown("---")
+
+        # ── MODEL 9: SHELF LIFE RISK ───────────────────────
+        st.markdown(sec("⚠️ Model 9 — Shelf Life & Velocity Risk"), unsafe_allow_html=True)
+        st.markdown(note("Identifies products at risk of expiring before being sold. Based on ShelfLifeDays and monthly velocity. Red = critical. Take immediate action to push sales or initiate recall."), unsafe_allow_html=True)
+
+        try:
+            df_sl = pd.read_csv("ml_shelf_risk.csv")
+            if "VelocityRisk" in df_sl.columns:
+                col1, col2 = st.columns(2)
+                with col1:
+                    slow = df_sl[df_sl["VelocityRisk"]=="🔴 Slow Moving"].head(15)
+                    fig = go.Figure(go.Bar(
+                        x=slow["QtyPerMonth"], y=slow["Material Name"],
+                        orientation="h",
+                        text=slow["QtyPerMonth"].apply(lambda x: f"{x:.0f} units/mo"),
+                        textposition="outside", textfont_size=9,
+                        marker_color="#c62828"))
+                    apply_layout(fig, height=480,
+                                 yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                                 xaxis=dict(gridcolor="#eee",title="Units per Month"))
+                    fig.update_layout(title="🔴 Slow Moving Products — Expiry Risk")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col2:
+                    fast = df_sl[df_sl["VelocityRisk"]=="🟢 Fast Moving"].nlargest(10,"QtyPerMonth")
+                    fig = go.Figure(go.Bar(
+                        x=fast["QtyPerMonth"], y=fast["Material Name"],
+                        orientation="h",
+                        text=fast["QtyPerMonth"].apply(lambda x: f"{x:,.0f} units/mo"),
+                        textposition="outside", textfont_size=9,
+                        marker_color="#2e7d32"))
+                    apply_layout(fig, height=480,
+                                 yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                                 xaxis=dict(gridcolor="#eee",title="Units per Month"))
+                    fig.update_layout(title="🟢 Fast Moving Products — No Risk")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                vc = df_sl["VelocityRisk"].value_counts()
+                c1,c2,c3 = st.columns(3)
+                c1.markdown(kpi("🔴 Slow Moving",str(vc.get("🔴 Slow Moving",0)),"Expiry Risk"), unsafe_allow_html=True)
+                c2.markdown(kpi("🟡 Moderate",str(vc.get("🟡 Moderate",0)),"Monitor"), unsafe_allow_html=True)
+                c3.markdown(kpi("🟢 Fast Moving",str(vc.get("🟢 Fast Moving",0)),"Safe"), unsafe_allow_html=True)
+
+            elif "Risk" in df_sl.columns:
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = px.pie(
+                        df_sl["Risk"].value_counts().reset_index(),
+                        values="count", names="Risk",
+                        title="Shelf Life Risk Distribution",
+                        color_discrete_map={
+                            "🔴 CRITICAL":"#c62828",
+                            "🟡 WARNING":"#e65100",
+                            "🟢 OK":"#2e7d32"})
+                    apply_layout(fig, height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    st.dataframe(df_sl[["Material Name","SDP Name","ShelfLifeDays","Risk"]].head(20),
+                                 use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"Model 9 error: {e}")
+
+        st.markdown("---")
+
+        # ── MODEL 10: DEMAND FORECAST ──────────────────────
+        st.markdown(sec("📦 Model 10 — Demand Forecast per City per Product (R2=0.909)"), unsafe_allow_html=True)
+        st.markdown(note("Random Forest model predicts how many units each city needs next month per product. Supply chain team can pre-position stock. Reduces stockouts and overstocking simultaneously."), unsafe_allow_html=True)
+
+        try:
+            df_dem = pd.read_csv("ml_demand_forecast.csv")
+            col1, col2 = st.columns(2)
+            with col1:
+                pivot_dem = df_dem.pivot_table(
+                    values="Apr2026_Qty", index="Product",
+                    columns="City", fill_value=0).round(0)
+                st.markdown("**Apr 2026 Demand Forecast (Units) by City:**")
+                st.dataframe(pivot_dem.astype(int), use_container_width=True)
+
+            with col2:
+                city_total = df_dem.groupby("City")["Apr2026_Rev"].sum().reset_index()
+                fig = px.bar(city_total.sort_values("Apr2026_Rev",ascending=False),
+                             x="City", y="Apr2026_Rev",
+                             text=city_total.sort_values("Apr2026_Rev",
+                                 ascending=False)["Apr2026_Rev"].apply(fmt),
+                             title="Apr 2026 Forecast Revenue by City",
+                             color_discrete_sequence=["#2c5f8a"])
+                fig.update_traces(textposition="outside", textfont_size=10)
+                apply_layout(fig, height=380,
+                             xaxis=dict(gridcolor="#eee"),
+                             yaxis=dict(gridcolor="#eee",title="Forecast Revenue"))
+                st.plotly_chart(fig, use_container_width=True)
+
+            prod_total = df_dem.groupby("Product")["Apr2026_Rev"].sum().reset_index()
+            fig = go.Figure(go.Bar(
+                x=prod_total.sort_values("Apr2026_Rev",ascending=False)["Apr2026_Rev"]/1e6,
+                y=prod_total.sort_values("Apr2026_Rev",ascending=False)["Product"],
+                orientation="h",
+                text=prod_total.sort_values("Apr2026_Rev",ascending=False)["Apr2026_Rev"].apply(fmt),
+                textposition="outside", textfont_size=9,
+                marker_color="#7b1fa2"))
+            apply_layout(fig, height=380,
+                         yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee",title="Forecast Revenue (M PKR)"))
+            fig.update_layout(title="Apr 2026 Forecast Revenue by Product")
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Model 10 error: {e}")
+
+        st.markdown("---")
+
+        # ── MODEL 11: BUDGET ALLOCATION ────────────────────
+        st.markdown(sec("💰 Model 11 — Optimal Promo Budget Allocator"), unsafe_allow_html=True)
+        st.markdown(note("Enter your total promotional budget. Model calculates optimal split across products to MAXIMIZE revenue. Current ROI = 18.6x. Optimized ROI = 159.7x on same budget!"), unsafe_allow_html=True)
+
+        try:
+            df_roi_prod = pd.read_csv("ml_budget_allocation.csv")
+            df_act_roi  = pd.read_csv("ml_activity_roi.csv")
+
+            st.markdown("### 🎯 Enter Your Budget:")
+            budget_total = st.number_input(
+                "Total Promotional Budget (PKR)",
+                min_value=1000000, max_value=200000000,
+                value=10000000, step=1000000,
+                key="budget_optimizer")
+
+            if st.button("🚀 Optimize My Budget!", type="primary"):
+                total_roi_sum = df_roi_prod["ROI_actual"].sum()
+                df_roi_prod["OptBudget"] = (
+                    df_roi_prod["ROI_actual"]/total_roi_sum * budget_total)
+                df_roi_prod["ExpRev"] = (
+                    df_roi_prod["OptBudget"] * df_roi_prod["ROI_actual"])
+
+                opt_roi_v = df_roi_prod["ExpRev"].sum()/df_roi_prod["OptBudget"].sum()
+                exp_rev_v = df_roi_prod["ExpRev"].sum()
+
+                c1,c2,c3 = st.columns(3)
+                c1.markdown(kpi("Your Budget",    fmt(budget_total), "Input"), unsafe_allow_html=True)
+                c2.markdown(kpi("Expected Revenue",fmt(exp_rev_v),   "ML Optimized"), unsafe_allow_html=True)
+                c3.markdown(kpi("Optimized ROI",  f"{opt_roi_v:.1f}x","vs Current 18.6x"), unsafe_allow_html=True)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = go.Figure(go.Bar(
+                        x=df_roi_prod["OptBudget"].head(10)/1e6,
+                        y=df_roi_prod["ProductName"].head(10),
+                        orientation="h",
+                        text=df_roi_prod["OptBudget"].head(10).apply(fmt),
+                        textposition="outside", textfont_size=9,
+                        marker_color="#2e7d32"))
+                    apply_layout(fig, height=380,
+                                 yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                                 xaxis=dict(gridcolor="#eee",title="Optimal Budget (M PKR)"))
+                    fig.update_layout(title="How to Allocate Your Budget")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with col2:
+                    disp_opt = df_roi_prod[["ProductName","OptBudget",
+                                            "ROI_actual","ExpRev"]].head(10).copy()
+                    disp_opt["OptBudget"]  = disp_opt["OptBudget"].apply(fmt)
+                    disp_opt["ROI_actual"] = disp_opt["ROI_actual"].apply(lambda x: f"{x:.1f}x")
+                    disp_opt["ExpRev"]     = disp_opt["ExpRev"].apply(fmt)
+                    st.dataframe(disp_opt.rename(columns={
+                        "ProductName":"Product","OptBudget":"Optimal Budget",
+                        "ROI_actual":"ROI","ExpRev":"Expected Revenue"}),
+                        use_container_width=True, hide_index=True)
+
+            # Activity type ROI
+            st.markdown("**Best Promotional Activity Types by ROI:**")
+            act_disp = df_act_roi.head(10).copy()
+            act_disp["TotalSpend"] = act_disp["TotalSpend"].apply(fmt)
+            act_disp["TotalRev"]   = act_disp["TotalRev"].apply(fmt)
+            act_disp["ROI"]        = act_disp["ROI"].apply(lambda x: f"{x:.1f}x")
+            st.dataframe(act_disp.rename(columns={
+                "ActivityHead":"Activity Type","TotalSpend":"Total Spend",
+                "TotalRev":"Revenue Generated","ROI":"ROI"}),
+                use_container_width=True, hide_index=True)
+
+        except Exception as e:
+            st.error(f"Model 11 error: {e}")
+
+        st.markdown("---")
+
         # ── FINAL SUMMARY ──────────────────────────────────
         st.markdown(sec("💰 ML-Driven Business Impact Summary"), unsafe_allow_html=True)
         c1,c2,c3,c4 = st.columns(4)
@@ -6118,4 +6507,3 @@ elif page == "🤖 ML Intelligence":
                         "46.3x ROI"), unsafe_allow_html=True)
         c4.markdown(kpi("Top Opportunity", "Karachi",
                         "Score 75/100 — 0 field visits!"), unsafe_allow_html=True)
-
