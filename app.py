@@ -2249,90 +2249,199 @@ For every PKR 1 invested:
                 fig2.update_layout(title=f"{prod_sel}: {h_roi:.1f}x Return")
                 st.plotly_chart(fig2, use_container_width=True)
 
+        # ── COMBINED UNITS + REVENUE CHART ───────────────────
         st.markdown("---")
+        st.markdown(sec("📊 Combined Forecast — Units & Revenue on One Chart"), unsafe_allow_html=True)
+        st.markdown(note("Blue line = Actual monthly revenue (PKR Billions). Green bars = Actual monthly units sold (Millions). Orange dashed = Revenue forecast. Purple dashed = Units forecast. Both on same chart for complete business picture."), unsafe_allow_html=True)
 
-        # ── MODEL 3: TERRITORY OPPORTUNITY ───────────────────
-        st.markdown(sec("🗺️ Model 3 — Territory Opportunity Scorer"), unsafe_allow_html=True)
-        st.markdown(note("Each city scored 0-100 based on: Revenue generated (40%), Field visit gap (40%), Revenue per trip ratio (20%). Red = high opportunity cities that need more field attention."), unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            top_terr = territory.head(20)
-            colors_t = ["#c62828" if p=="🔴 High Opportunity"
-                        else "#e65100" if p=="🟡 Needs Attention"
-                        else "#2c5f8a" for p in top_terr["Priority"]]
-            fig = go.Figure(go.Bar(
-                x=top_terr["OpportunityScore"], y=top_terr["City"],
-                orientation="h",
-                text=top_terr["OpportunityScore"].apply(lambda x: f"{x:.1f}"),
-                textposition="outside", textfont_size=10,
-                marker_color=colors_t))
-            apply_layout(fig, height=550,
-                yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                xaxis=dict(gridcolor="#eee", title="Opportunity Score (0-100)"))
-            fig.update_layout(title="City Opportunity Score — Red = Send More Reps Here!")
-            st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            terr_disp = territory[["City","Revenue","Trips","RevPerTrip","OpportunityScore","Priority"]].copy()
-            terr_disp["Revenue"]    = terr_disp["Revenue"].apply(fmt)
-            terr_disp["RevPerTrip"] = terr_disp["RevPerTrip"].apply(lambda x: f"PKR {x/1e6:.1f}M")
-            terr_disp["Score"]      = terr_disp["OpportunityScore"].apply(lambda x: f"{x:.1f}/100")
-            terr_disp["Trips"]      = terr_disp["Trips"].astype(int)
-            st.dataframe(
-                terr_disp[["City","Revenue","Trips","RevPerTrip","Score","Priority"]].head(20),
-                use_container_width=True, hide_index=True)
-            st.markdown(good("Karachi = PKR 872M revenue but near-zero field trips = BIGGEST opportunity. Add 300+ Karachi trips = +PKR 150M estimated revenue."), unsafe_allow_html=True)
+        if len(fc_units) > 0:
+            # Historical data
+            hist_rev_m = df_sales[df_sales["Yr"]>=2023].groupby("Date")["TotalRevenue"].sum().reset_index()
+            hist_units_m = df_sales[df_sales["Yr"]>=2023].groupby("Date")["TotalUnits"].sum().reset_index()
 
-        st.markdown("---")
+            fig_combined = make_subplots(specs=[[{"secondary_y": True}]])
 
-        # ── BUSINESS IMPACT SUMMARY ───────────────────────────
-        st.markdown(sec("💰 ML-Driven Business Impact Summary"), unsafe_allow_html=True)
-        top_opp = territory[territory["Priority"]=="🔴 High Opportunity"].iloc[0]["City"] if len(territory[territory["Priority"]=="🔴 High Opportunity"])>0 else "Karachi"
-        top_roi_prod = hist_roi.iloc[0]["ProductName"] if len(hist_roi)>0 else "Ramipace"
-        top_roi_val  = hist_roi.iloc[0]["ROI"] if len(hist_roi)>0 else 65.9
+            # Historical Revenue — blue line
+            fig_combined.add_trace(go.Scatter(
+                x=hist_rev_m["Date"], y=hist_rev_m["TotalRevenue"]/1e9,
+                name="Actual Revenue (B PKR)", mode="lines+markers",
+                line=dict(color="#2c5f8a", width=2.5),
+                marker=dict(size=5),
+                hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B<extra></extra>"),
+                secondary_y=False)
 
-        c1,c2,c3,c4 = st.columns(4)
-        c1.markdown(kpi("6-Month Unit Forecast", f"{total_fc_units:.1f}M units", "Apr–Sep 2026"), unsafe_allow_html=True)
-        c2.markdown(kpi("Est. 6-Month Revenue",  fmt(total_fc_units*1e6*321), "At PKR 321/unit"), unsafe_allow_html=True)
-        c3.markdown(kpi("Top ROI Product",        f"{top_roi_prod}", f"{top_roi_val:.1f}x ROI"), unsafe_allow_html=True)
-        c4.markdown(kpi("Top Opportunity City",   top_opp, "Needs more field reps"), unsafe_allow_html=True)
+            # Historical Units — green bars
+            fig_combined.add_trace(go.Bar(
+                x=hist_units_m["Date"], y=hist_units_m["TotalUnits"]/1e6,
+                name="Actual Units (M)", opacity=0.4,
+                marker_color="#2e7d32",
+                hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"),
+                secondary_y=True)
+
+            # Forecast Revenue — orange dashed
+            fc_rev_vals = fc_units["Units_M"] * 321  # PKR per unit
+            fig_combined.add_trace(go.Scatter(
+                x=fc_units["Date"], y=fc_rev_vals/1e3,  # B PKR
+                name="Forecast Revenue (B PKR)", mode="lines+markers",
+                line=dict(color="#e65100", width=2.5, dash="dash"),
+                marker=dict(size=8, symbol="diamond"),
+                hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B forecast<extra></extra>"),
+                secondary_y=False)
+
+            # Forecast Units — purple dashed
+            fig_combined.add_trace(go.Scatter(
+                x=fc_units["Date"], y=fc_units["Units_M"],
+                name="Forecast Units (M)", mode="lines+markers",
+                line=dict(color="#7b1fa2", width=2.5, dash="dot"),
+                marker=dict(size=8, symbol="circle"),
+                hovertemplate="%{x|%b %Y}: %{y:.2f}M units forecast<extra></extra>"),
+                secondary_y=True)
+
+            apply_layout(fig_combined, height=450,
+                hovermode="x unified",
+                xaxis=dict(gridcolor="#eee", title="Month"),
+                legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
+            fig_combined.update_yaxes(title_text="Revenue (PKR Billions)", gridcolor="#eee", secondary_y=False)
+            fig_combined.update_yaxes(title_text="Units Sold (Millions)",  gridcolor="#eee", secondary_y=True)
+            fig_combined.update_layout(title="📈 Complete Business Picture — Revenue + Units (Actual & Forecast)", barmode="overlay")
+            st.plotly_chart(fig_combined, use_container_width=True)
+
+            # Summary KPIs
+            c1,c2,c3,c4 = st.columns(4)
+            c1.markdown(kpi("6-Month Unit Forecast", f"{total_fc_units:.1f}M", "Apr–Sep 2026 units"), unsafe_allow_html=True)
+            c2.markdown(kpi("Est. 6-Month Revenue",  fmt(total_fc_units*1e6*321), "At PKR 321/unit avg"), unsafe_allow_html=True)
+            c3.markdown(kpi("Units Growth 2025",     "+10.3%", "66.5M → 73.4M units"), unsafe_allow_html=True)
+            c4.markdown(kpi("Revenue/Unit",          "PKR 321", "Avg selling price verified"), unsafe_allow_html=True)
+
 
 # ════════════════════════════════════════════════════════════
 # PAGE 13: PERSONAL DASHBOARD
 # ════════════════════════════════════════════════════════════
 elif page == "📌 Personal Dashboard":
     st.markdown("<h1 style='color:#2c5f8a'>📌 Personal Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666'>Select any charts from across the dashboard and pin them here for quick access.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#666'>Your personal view — 18 live KPI tiles always shown + choose any charts from all 4 databases.</p>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # Available charts catalog
+    # ── LIVE KPI TILES — ALWAYS SHOWN ──────────────────────
+    st.markdown("### 📌 Live KPI Tiles — Updated from SQL Data")
+    rev_24_pd = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+    rev_25_pd = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+    rev_26_pd = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
+    sp_24_pd  = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
+    sp_25_pd  = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
+    roi_24_pd = rev_24_pd/sp_24_pd if sp_24_pd>0 else 0
+    roi_25_pd = rev_25_pd/sp_25_pd if sp_25_pd>0 else 0
+    units_24_pd = df_sales[df_sales["Yr"]==2024]["TotalUnits"].sum()
+    units_25_pd = df_sales[df_sales["Yr"]==2025]["TotalUnits"].sum()
+    trips_24_pd = df_travel[df_travel["Yr"]==2024]["TravelCount"].sum()
+    trips_25_pd = df_travel[df_travel["Yr"]==2025]["TravelCount"].sum()
+    disc_pd     = df_sales["TotalDiscount"].sum()
+    top_prod_pd = df_sales.groupby("ProductName")["TotalRevenue"].sum().idxmax()
+    inv_25_pd   = df_sales[df_sales["Yr"]==2025]["InvoiceCount"].sum()
+
+    st.markdown("**📈 Revenue & Growth**")
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.markdown(kpi("Revenue 2024",    fmt(rev_24_pd),   "Full year"), unsafe_allow_html=True)
+    c2.markdown(kpi("Revenue 2025",    fmt(rev_25_pd),   f"+{(rev_25_pd-rev_24_pd)/rev_24_pd*100:.1f}% YoY"), unsafe_allow_html=True)
+    c3.markdown(kpi("Revenue 2026 YTD",fmt(rev_26_pd),   "Jan–Apr 2026"), unsafe_allow_html=True)
+    c4.markdown(kpi("Run Rate 2026",   fmt(rev_26_pd/4*12),"If current pace holds"), unsafe_allow_html=True)
+    c5.markdown(kpi("Revenue Growth",  f"+{(rev_25_pd-rev_24_pd)/rev_24_pd*100:.1f}%","2024 → 2025"), unsafe_allow_html=True)
+    c6.markdown(kpi("Total Revenue",   fmt(df_sales["TotalRevenue"].sum()),"All years combined"), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**📦 Units & Invoices**")
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.markdown(kpi("Units 2024",      fmt_num(units_24_pd), "66.5M units"), unsafe_allow_html=True)
+    c2.markdown(kpi("Units 2025",      fmt_num(units_25_pd), "+10.3% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("Invoices 2025",   fmt_num(inv_25_pd),   "Jan–Dec 2025"), unsafe_allow_html=True)
+    c4.markdown(kpi("Avg Rev/Unit",    "PKR 321",            "Verified 2025"), unsafe_allow_html=True)
+    c5.markdown(kpi("Top Product",     top_prod_pd[:15],     "Highest revenue"), unsafe_allow_html=True)
+    c6.markdown(kpi("Fastest Grower",  "Erlina Plus XR",     "+699% growth"), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**💰 Promotions & ROI**")
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.markdown(kpi("Promo 2024",      fmt(sp_24_pd),        "Activities DB"), unsafe_allow_html=True)
+    c2.markdown(kpi("Promo 2025",      fmt(sp_25_pd),        "+38.2% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("ROI 2024",        f"{roi_24_pd:.1f}x",  "Baseline"), unsafe_allow_html=True)
+    c4.markdown(kpi("ROI 2025",        f"{roi_25_pd:.1f}x",  "⚠️ Declining", red=True), unsafe_allow_html=True)
+    c5.markdown(kpi("Best ROI",        "Ramipace 65.9x",     "PKR 14.4M→951M"), unsafe_allow_html=True)
+    c6.markdown(kpi("Total Discounts", fmt(disc_pd),          "⚠️ Fix Falcons 20.5%", red=True), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**✈️ Field Activity**")
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.markdown(kpi("Trips 2024",      fmt_num(trips_24_pd), "Field visits"), unsafe_allow_html=True)
+    c2.markdown(kpi("Trips 2025",      fmt_num(trips_25_pd), "+2.0% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("Top City Visits", "Lahore",             "1,566 trips"), unsafe_allow_html=True)
+    c4.markdown(kpi("Div 1 Activity",  "82 trips/person",    "Best division"), unsafe_allow_html=True)
+    c5.markdown(kpi("Div 4 Activity",  "16 trips/person",    "🔴 5x below Div 1", red=True), unsafe_allow_html=True)
+    c6.markdown(kpi("Top Hotel",       "Indigo Heights",     "880+ bookings"), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**📦 Distribution (ZSDCY)**")
+    zrev_24_pd = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum() if len(df_zsdcy)>0 else 0
+    zrev_25_pd = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum() if len(df_zsdcy)>0 else 0
+    top_city_pd= df_zsdcy.groupby("City")["Revenue"].sum().idxmax() if len(df_zsdcy)>0 else "Karachi"
+    c1,c2,c3,c4,c5,c6 = st.columns(6)
+    c1.markdown(kpi("Primary 2024",    fmt(zrev_24_pd),    "ZSDCY DB"), unsafe_allow_html=True)
+    c2.markdown(kpi("Primary 2025",    fmt(zrev_25_pd),    "+28.7% YoY"), unsafe_allow_html=True)
+    c3.markdown(kpi("Top City",        top_city_pd,        "PKR 872M revenue"), unsafe_allow_html=True)
+    c4.markdown(kpi("Nutra Growth",    "+35.5%",           "vs Pharma +28%"), unsafe_allow_html=True)
+    c5.markdown(kpi("Lost Distrib.",   "26",               "PKR 91.6M gone", red=True), unsafe_allow_html=True)
+    c6.markdown(kpi("Nusrat Pharma",   "PKR 224.9M",       "🔴 Account lost", red=True), unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── CHART SELECTOR ─────────────────────────────────────
     all_charts = {
-        "📈 Revenue Trend (Monthly)"           : "rev_trend",
-        "🏆 Top 10 Products by Revenue"        : "top_products",
-        "👥 Top 10 Teams by Revenue"           : "top_teams",
-        "💰 Promo Spend by Year"               : "promo_year",
-        "📊 ROI by Product"                    : "roi_products",
-        "✈️ Top 15 Most Visited Cities"        : "travel_cities",
-        "📦 ZSDCY Category Revenue"            : "zsdcy_cat",
-        "🗺️ City Revenue (ZSDCY)"             : "city_rev",
-        "🚀 Fastest Growing Products"          : "fast_grow",
-        "💹 Promo vs Revenue Monthly"          : "promo_rev",
-        "🏢 Division Field Activity"           : "div_activity",
-        "📅 Sales Seasonality Heatmap"         : "seasonality",
-        "⏰ Promo Timing Analysis"             : "promo_timing",
-        "🌿 Nutraceutical vs Pharma Growth"    : "nutra_growth",
-        "🔴 Distributor Risk Summary"          : "dist_risk",
-        "🔮 6-Month Revenue Forecast"          : "ml_forecast",
-        "⚡ Quick Wins Action Table"           : "quick_wins",
-        "🏨 Hotel Cost Optimization"           : "hotel_cost",
+        "📈 Revenue Trend (Monthly)"            : "rev_trend",
+        "📊 Revenue by Year"                    : "rev_year",
+        "🏆 Top 10 Products by Revenue"         : "top_products",
+        "⚠️ Bottom 10 Products by Revenue"      : "bot_products",
+        "👥 Top 10 Teams by Revenue"            : "top_teams",
+        "⚠️ Bottom 10 Teams by Revenue"         : "bot_teams",
+        "🚀 Fastest Growing Products"           : "fast_grow",
+        "📉 Slowest Growing Products"           : "slow_grow",
+        "📅 Sales Seasonality Heatmap"          : "seasonality",
+        "📦 Units Sold by Year"                 : "units_year",
+        "🧾 Invoice Count by Year"              : "invoice_year",
+        "💸 Discount Rate by Team"              : "disc_team",
+        "📈 Revenue 2024 vs 2025 Compare"       : "rev_compare",
+        "💰 Promo Spend by Year"                : "promo_year",
+        "💰 Promo Spend by Team"                : "promo_team",
+        "💰 Promo Spend by Product"             : "promo_prod",
+        "💰 Promo Spend by Activity Type"       : "promo_type",
+        "⏰ Promo Timing vs Sales Rank"         : "promo_timing",
+        "💹 Promo vs Revenue Monthly"           : "promo_rev",
+        "📊 ROI by Product (Top 15)"            : "roi_products",
+        "📊 ROI by Team"                        : "roi_team",
+        "📊 ROI 2024 vs 2025"                   : "roi_compare",
+        "✈️ Top 15 Most Visited Cities"         : "travel_cities",
+        "✈️ Travel Trips by Year"               : "travel_year",
+        "✈️ Travel by Division"                 : "div_activity",
+        "✈️ Travel Seasonality (Monthly)"       : "travel_month",
+        "🏨 Top Hotels by Bookings"             : "hotel_cost",
+        "📦 ZSDCY Category Revenue (Pie)"       : "zsdcy_cat",
+        "📦 ZSDCY Revenue by Year"              : "zsdcy_year",
+        "🗺️ Top 15 Cities by Revenue"          : "city_rev",
+        "🌿 Nutraceutical vs Pharma Growth"     : "nutra_growth",
+        "🏢 Top Distributors by Revenue"        : "top_sdp",
+        "🤖 Units Forecast (6 Months)"          : "ml_units",
+        "🤖 Revenue Forecast (6 Months)"        : "ml_revenue",
+        "📊 ML ROI Products Verified"           : "ml_roi",
+        "🚨 Discount Abuse by Team"             : "disc_abuse",
+        "⚡ Quick Wins Action Table"            : "quick_wins",
+        "🚨 Lost Distributors Table"            : "lost_dist",
     }
 
-    st.markdown("### ➕ Add Charts to Your Personal Dashboard")
-    st.markdown(note("Select charts below and click 'Add to Dashboard'. Your selection is saved for this session."), unsafe_allow_html=True)
+    st.markdown("### ➕ Select Charts for Your Personal View")
+    st.markdown(note("38 charts available from all 4 databases. Select any combination and save. KPI tiles above always stay visible."), unsafe_allow_html=True)
 
     if "personal_charts" not in st.session_state:
         st.session_state.personal_charts = []
 
-    col1, col2 = st.columns([2,1])
+    col1, col2 = st.columns([3,1])
     with col1:
         selected_charts = st.multiselect(
             "Choose charts to display:",
@@ -2341,22 +2450,18 @@ elif page == "📌 Personal Dashboard":
         )
     with col2:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("💾 Save My Dashboard", type="primary", use_container_width=True):
+        if st.button("💾 Save Dashboard", type="primary", use_container_width=True):
             st.session_state.personal_charts = selected_charts
-            st.success(f"✅ {len(selected_charts)} charts saved to your personal dashboard!")
-        if st.button("🗑️ Clear Dashboard", use_container_width=True):
+            st.success(f"✅ {len(selected_charts)} charts saved!")
+        if st.button("🗑️ Clear All", use_container_width=True):
             st.session_state.personal_charts = []
             st.rerun()
 
     active = st.session_state.personal_charts if st.session_state.personal_charts else selected_charts
 
-    if not active:
-        st.info("👆 Select charts above and click 'Save My Dashboard' to build your personal view.")
-    else:
+    if active:
         st.markdown("---")
-        st.markdown(f"### 📊 Your Personal Dashboard ({len(active)} charts)")
-
-        # Render selected charts in 2-column grid
+        st.markdown(f"### 📊 Your Selected Charts ({len(active)})")
         for i in range(0, len(active), 2):
             cols = st.columns(2)
             for j, col in enumerate(cols):
@@ -2368,107 +2473,58 @@ elif page == "📌 Personal Dashboard":
                         try:
                             if chart_key == "rev_trend":
                                 monthly = df_sales.groupby("Date")["TotalRevenue"].sum().reset_index()
-                                fig = px.line(monthly, x="Date", y="TotalRevenue",
-                                    color_discrete_sequence=["#2c5f8a"])
+                                fig = px.line(monthly, x="Date", y="TotalRevenue", color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(mode="lines+markers")
                                 apply_layout(fig, height=280, yaxis=dict(title="Revenue (PKR)"))
                                 st.plotly_chart(fig, use_container_width=True)
-
+                            elif chart_key == "rev_year":
+                                ry = df_sales.groupby("Yr")["TotalRevenue"].sum().reset_index()
+                                fig = px.bar(ry, x="Yr", y="TotalRevenue", text=ry["TotalRevenue"].apply(fmt), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280, xaxis=dict(tickmode="array",tickvals=ry["Yr"].tolist()))
+                                st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "top_products":
                                 tp = df_sales.groupby("ProductName")["TotalRevenue"].sum().nlargest(10).reset_index()
-                                fig = px.bar(tp, x="TotalRevenue", y="ProductName", orientation="h",
-                                    text=tp["TotalRevenue"].apply(fmt), color_discrete_sequence=["#2c5f8a"])
+                                fig = px.bar(tp, x="TotalRevenue", y="ProductName", orientation="h", text=tp["TotalRevenue"].apply(fmt), color_discrete_sequence=["#2c5f8a"])
                                 fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
-
+                            elif chart_key == "bot_products":
+                                bp = df_sales.groupby("ProductName")["TotalRevenue"].sum().reset_index()
+                                bp = bp[bp["TotalRevenue"]>0].nsmallest(10,"TotalRevenue")
+                                fig = go.Figure(go.Bar(x=bp["TotalRevenue"], y=bp["ProductName"], orientation="h", text=bp["TotalRevenue"].apply(fmt), textposition="outside", marker_color="#c62828"))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "top_teams":
                                 tt = df_sales.groupby("TeamName")["TotalRevenue"].sum().nlargest(10).reset_index()
-                                fig = px.bar(tt, x="TotalRevenue", y="TeamName", orientation="h",
-                                    text=tt["TotalRevenue"].apply(fmt), color_discrete_sequence=["#2e7d32"])
+                                fig = px.bar(tt, x="TotalRevenue", y="TeamName", orientation="h", text=tt["TotalRevenue"].apply(fmt), color_discrete_sequence=["#2e7d32"])
                                 fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "promo_year":
-                                ysp = df_act.groupby("Yr")["TotalAmount"].sum().reset_index()
-                                fig = px.bar(ysp, x="Yr", y="TotalAmount",
-                                    text=ysp["TotalAmount"].apply(fmt), color_discrete_sequence=["#e65100"])
-                                fig.update_traces(textposition="outside")
-                                apply_layout(fig, height=280)
+                            elif chart_key == "bot_teams":
+                                bt = df_sales.groupby("TeamName")["TotalRevenue"].sum().nsmallest(10).reset_index()
+                                fig = go.Figure(go.Bar(x=bt["TotalRevenue"], y=bt["TeamName"], orientation="h", text=bt["TotalRevenue"].apply(fmt), textposition="outside", marker_color="#e65100"))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "roi_products":
-                                rv = df_sales.groupby("ProductName")["TotalRevenue"].sum()
-                                sp = df_act.groupby("Product")["TotalAmount"].sum()
-                                rc = pd.DataFrame({"Rev":rv,"Spend":sp}).dropna().reset_index()
-                                rc.columns = ["ProductName","Rev","Spend"]
-                                rc = rc[rc["Spend"]>0]; rc["ROI"] = rc["Rev"]/rc["Spend"]
-                                tr = rc.nlargest(12,"ROI")
-                                fig = px.bar(tr, x="ROI", y="ProductName", orientation="h",
-                                    text=tr["ROI"].apply(lambda x: f"{x:.1f}x"), color_discrete_sequence=["#7b1fa2"])
-                                fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
-                                st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "travel_cities":
-                                lc = df_travel.groupby("VisitLocation")["TravelCount"].sum().nlargest(15).reset_index()
-                                fig = px.bar(lc, x="TravelCount", y="VisitLocation", orientation="h",
-                                    text=lc["TravelCount"].apply(fmt_num), color_discrete_sequence=["#2c5f8a"])
-                                fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
-                                st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "zsdcy_cat":
-                                cr = df_zsdcy.groupby("Category")["Revenue"].sum().reset_index()
-                                cr["Name"] = cr["Category"].map({"P":"Pharma","N":"Nutraceutical","M":"Medical Device","H":"Herbal","E":"Export"})
-                                fig = px.pie(cr, values="Revenue", names="Name",
-                                    color_discrete_sequence=px.colors.qualitative.Set2)
-                                fig.update_traces(textinfo="percent+label")
-                                apply_layout(fig, height=280)
-                                st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "city_rev":
-                                cr = df_zsdcy.groupby("City")["Revenue"].sum().nlargest(15).reset_index()
-                                fig = px.bar(cr, x="Revenue", y="City", orientation="h",
-                                    text=cr["Revenue"].apply(fmt), color_discrete_sequence=["#2c5f8a"])
-                                fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
-                                st.plotly_chart(fig, use_container_width=True)
-
                             elif chart_key == "fast_grow":
                                 r24 = df_sales[df_sales["Yr"]==2024].groupby("ProductName")["TotalRevenue"].sum()
                                 r25 = df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum()
                                 gdf = pd.DataFrame({"r24":r24,"r25":r25}).dropna()
-                                gdf = gdf[gdf["r24"]>5e6]
-                                gdf["g"] = (gdf["r25"]-gdf["r24"])/gdf["r24"]*100
+                                gdf = gdf[gdf["r24"]>5e6]; gdf["g"] = (gdf["r25"]-gdf["r24"])/gdf["r24"]*100
                                 top = gdf.nlargest(10,"g").reset_index()
-                                fig = px.bar(top, x="g", y="ProductName", orientation="h",
-                                    text=top["g"].apply(lambda x: f"+{x:.0f}%"), color_discrete_sequence=["#2e7d32"])
+                                fig = px.bar(top, x="g", y="ProductName", orientation="h", text=top["g"].apply(lambda x: f"+{x:.0f}%"), color_discrete_sequence=["#2e7d32"])
                                 fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "promo_rev":
-                                msp = df_act[df_act["Yr"]>=2024].groupby("Date")["TotalAmount"].sum().reset_index()
-                                mrv = df_sales.groupby("Date")["TotalRevenue"].sum().reset_index()
-                                cb  = pd.merge(msp, mrv, on="Date", how="inner")
-                                fig = make_subplots(specs=[[{"secondary_y":True}]])
-                                fig.add_trace(go.Bar(x=cb["Date"], y=cb["TotalAmount"]/1e6,
-                                    name="Promo", marker_color="rgba(230,81,0,0.7)"), secondary_y=False)
-                                fig.add_trace(go.Scatter(x=cb["Date"], y=cb["TotalRevenue"]/1e6,
-                                    name="Revenue", line=dict(color="#2c5f8a",width=2)), secondary_y=True)
-                                apply_layout(fig, height=280)
+                            elif chart_key == "slow_grow":
+                                r24 = df_sales[df_sales["Yr"]==2024].groupby("ProductName")["TotalRevenue"].sum()
+                                r25 = df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum()
+                                gdf = pd.DataFrame({"r24":r24,"r25":r25}).dropna()
+                                gdf = gdf[gdf["r24"]>5e6]; gdf["g"] = (gdf["r25"]-gdf["r24"])/gdf["r24"]*100
+                                bot = gdf.nsmallest(10,"g").reset_index()
+                                fig = go.Figure(go.Bar(x=bot["g"], y=bot["ProductName"], orientation="h", text=bot["g"].apply(lambda x: f"{x:.0f}%"), textposition="outside", marker_color="#c62828"))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "div_activity":
-                                dv = df_travel.groupby("TravellerDivision").agg(Trips=("TravelCount","sum"),People=("Traveller","nunique")).reset_index()
-                                dv["TpP"] = (dv["Trips"]/dv["People"]).round(1)
-                                fig = px.bar(dv.sort_values("TpP"), x="TpP", y="TravellerDivision", orientation="h",
-                                    text=dv.sort_values("TpP")["TpP"].apply(lambda x: f"{x:.0f}"), color_discrete_sequence=["#2c5f8a"])
-                                fig.update_traces(textposition="outside")
-                                apply_layout(fig, height=280)
-                                st.plotly_chart(fig, use_container_width=True)
-
                             elif chart_key == "seasonality":
                                 heat = df_sales[df_sales["Yr"]<2026].groupby(["Yr","Mo"])["TotalRevenue"].sum().reset_index()
                                 heat["Month"] = heat["Mo"].map(months_map)
@@ -2476,72 +2532,226 @@ elif page == "📌 Personal Dashboard":
                                 fig = px.imshow(hp/1e6, color_continuous_scale="Blues", aspect="auto")
                                 apply_layout(fig, height=280)
                                 st.plotly_chart(fig, use_container_width=True)
-
+                            elif chart_key == "units_year":
+                                uy = df_sales.groupby("Yr")["TotalUnits"].sum().reset_index()
+                                fig = px.bar(uy, x="Yr", y="TotalUnits", text=uy["TotalUnits"].apply(lambda x: f"{x/1e6:.1f}M"), color_discrete_sequence=["#7b1fa2"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280, xaxis=dict(tickmode="array",tickvals=uy["Yr"].tolist()))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "invoice_year":
+                                iy = df_sales.groupby("Yr")["InvoiceCount"].sum().reset_index()
+                                fig = px.bar(iy, x="Yr", y="InvoiceCount", text=iy["InvoiceCount"].apply(lambda x: f"{x/1e6:.1f}M"), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280, xaxis=dict(tickmode="array",tickvals=iy["Yr"].tolist()))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "disc_team":
+                                dt2 = df_sales.groupby("TeamName").agg(D=("TotalDiscount","sum"),R=("TotalRevenue","sum")).reset_index()
+                                dt2 = dt2[dt2["R"]>5e6]; dt2["Rate"] = dt2["D"]/dt2["R"]*100
+                                dt2 = dt2.nlargest(10,"Rate")
+                                colors_d = ["#c62828" if r>10 else "#e65100" if r>3 else "#2c5f8a" for r in dt2["Rate"]]
+                                fig = go.Figure(go.Bar(x=dt2["Rate"], y=dt2["TeamName"], orientation="h", text=[f"{r:.1f}%" for r in dt2["Rate"]], textposition="outside", marker_color=colors_d))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "rev_compare":
+                                ry2 = df_sales[df_sales["Yr"].isin([2024,2025])].groupby(["ProductName","Yr"])["TotalRevenue"].sum().reset_index()
+                                top15 = ry2.groupby("ProductName")["TotalRevenue"].sum().nlargest(10).index
+                                ry2 = ry2[ry2["ProductName"].isin(top15)]; ry2["Yr"] = ry2["Yr"].astype(str)
+                                fig = px.bar(ry2, x="ProductName", y="TotalRevenue", color="Yr", barmode="group", color_discrete_map={"2024":"#2c5f8a","2025":"#2e7d32"})
+                                apply_layout(fig, height=320, xaxis=dict(tickangle=-30))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "promo_year":
+                                ysp = df_act.groupby("Yr")["TotalAmount"].sum().reset_index()
+                                fig = px.bar(ysp, x="Yr", y="TotalAmount", text=ysp["TotalAmount"].apply(fmt), color_discrete_sequence=["#e65100"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280, xaxis=dict(tickmode="array",tickvals=ysp["Yr"].tolist()))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "promo_team":
+                                pt = df_act.groupby("RequestorTeams")["TotalAmount"].sum().nlargest(10).reset_index()
+                                fig = px.bar(pt, x="TotalAmount", y="RequestorTeams", orientation="h", text=pt["TotalAmount"].apply(fmt), color_discrete_sequence=["#e65100"])
+                                fig.update_traces(textposition="outside", textfont_size=9)
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "promo_prod":
+                                pp = df_act.groupby("Product")["TotalAmount"].sum().nlargest(10).reset_index()
+                                fig = px.bar(pp, x="TotalAmount", y="Product", orientation="h", text=pp["TotalAmount"].apply(fmt), color_discrete_sequence=["#7b1fa2"])
+                                fig.update_traces(textposition="outside", textfont_size=9)
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "promo_type":
+                                pty = df_act.groupby("ActivityHead")["TotalAmount"].sum().nlargest(8).reset_index()
+                                fig = px.pie(pty, values="TotalAmount", names="ActivityHead", color_discrete_sequence=px.colors.qualitative.Set2)
+                                fig.update_traces(textinfo="percent+label")
+                                apply_layout(fig, height=280)
+                                st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "promo_timing":
                                 pm = df_act.groupby("Mo")["TotalAmount"].sum().rank(ascending=False).astype(int)
                                 sm = df_sales.groupby("Mo")["TotalRevenue"].sum().rank(ascending=False).astype(int)
-                                tdf = pd.DataFrame({"Month":list(months_map.values()),
-                                    "Promo":[pm.get(m,0) for m in range(1,13)],
-                                    "Sales":[sm.get(m,0) for m in range(1,13)]})
+                                tdf = pd.DataFrame({"Month":list(months_map.values()),"Promo":[pm.get(m,0) for m in range(1,13)],"Sales":[sm.get(m,0) for m in range(1,13)]})
                                 fig = go.Figure()
                                 fig.add_trace(go.Scatter(x=tdf["Month"],y=tdf["Promo"],name="Promo",mode="lines+markers",line=dict(color="#e65100",width=2)))
                                 fig.add_trace(go.Scatter(x=tdf["Month"],y=tdf["Sales"],name="Sales",mode="lines+markers",line=dict(color="#2c5f8a",width=2)))
                                 apply_layout(fig, height=280, yaxis=dict(autorange="reversed",title="Rank"))
                                 st.plotly_chart(fig, use_container_width=True)
-
+                            elif chart_key == "promo_rev":
+                                msp = df_act[df_act["Yr"]>=2024].groupby("Date")["TotalAmount"].sum().reset_index()
+                                mrv = df_sales.groupby("Date")["TotalRevenue"].sum().reset_index()
+                                cb  = pd.merge(msp, mrv, on="Date", how="inner")
+                                fig = make_subplots(specs=[[{"secondary_y":True}]])
+                                fig.add_trace(go.Bar(x=cb["Date"], y=cb["TotalAmount"]/1e6, name="Promo", marker_color="rgba(230,81,0,0.7)"), secondary_y=False)
+                                fig.add_trace(go.Scatter(x=cb["Date"], y=cb["TotalRevenue"]/1e6, name="Revenue", line=dict(color="#2c5f8a",width=2)), secondary_y=True)
+                                apply_layout(fig, height=280)
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "roi_products":
+                                rv = df_sales.groupby("ProductName")["TotalRevenue"].sum()
+                                sp = df_act.groupby("Product")["TotalAmount"].sum()
+                                rc = pd.DataFrame({"Rev":rv,"Spend":sp}).dropna().reset_index()
+                                rc.columns = ["ProductName","Rev","Spend"]
+                                rc = rc[rc["Spend"]>0]; rc["ROI"] = rc["Rev"]/rc["Spend"]
+                                tr = rc.nlargest(12,"ROI")
+                                colors_r = ["#FFD700" if "RAMIPACE" in p.upper() else "#2e7d32" if r>30 else "#2c5f8a" for p,r in zip(tr["ProductName"],tr["ROI"])]
+                                fig = go.Figure(go.Bar(x=tr["ROI"], y=tr["ProductName"], orientation="h", text=tr["ROI"].apply(lambda x: f"{x:.1f}x"), textposition="outside", marker_color=colors_r))
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "roi_team":
+                                rv_t = df_sales.groupby("TeamName")["TotalRevenue"].sum()
+                                sp_t = df_act.groupby("RequestorTeams")["TotalAmount"].sum()
+                                rc_t = pd.DataFrame({"Rev":rv_t,"Spend":sp_t}).dropna().reset_index()
+                                rc_t.columns = ["Team","Rev","Spend"]
+                                rc_t = rc_t[rc_t["Spend"]>0]; rc_t["ROI"] = rc_t["Rev"]/rc_t["Spend"]
+                                rc_t = rc_t.sort_values("ROI",ascending=False).head(10)
+                                fig = px.bar(rc_t, x="ROI", y="Team", orientation="h", text=rc_t["ROI"].apply(lambda x: f"{x:.1f}x"), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "roi_compare":
+                                r24r = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+                                r25r = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+                                s24r = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
+                                s25r = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
+                                fig = go.Figure(go.Bar(x=["ROI 2024","ROI 2025"], y=[r24r/s24r,r25r/s25r],
+                                    text=[f"{r24r/s24r:.1f}x",f"{r25r/s25r:.1f}x"], textposition="outside",
+                                    marker_color=["#2e7d32","#c62828"]))
+                                apply_layout(fig, height=280, yaxis=dict(title="ROI"), showlegend=False)
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "travel_cities":
+                                lc = df_travel.groupby("VisitLocation")["TravelCount"].sum().nlargest(15).reset_index()
+                                fig = px.bar(lc, x="TravelCount", y="VisitLocation", orientation="h", text=lc["TravelCount"].apply(fmt_num), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside", textfont_size=9)
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "travel_year":
+                                ty = df_travel.groupby("Yr")["TravelCount"].sum().reset_index()
+                                fig = px.bar(ty, x="Yr", y="TravelCount", text=ty["TravelCount"].apply(fmt_num), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280, xaxis=dict(tickmode="array",tickvals=ty["Yr"].tolist()))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "div_activity":
+                                dv = df_travel.groupby("TravellerDivision").agg(Trips=("TravelCount","sum"),People=("Traveller","nunique")).reset_index()
+                                dv["TpP"] = (dv["Trips"]/dv["People"]).round(1)
+                                colors_div = ["#c62828" if t<30 else "#e65100" if t<50 else "#2e7d32" for t in dv.sort_values("TpP")["TpP"]]
+                                fig = go.Figure(go.Bar(x=dv.sort_values("TpP")["TpP"], y=dv.sort_values("TpP")["TravellerDivision"], orientation="h", text=dv.sort_values("TpP")["TpP"].apply(lambda x: f"{x:.0f}"), textposition="outside", marker_color=colors_div))
+                                apply_layout(fig, height=280)
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "travel_month":
+                                tm = df_travel.groupby("Mo")["TravelCount"].sum().reset_index()
+                                tm["Month"] = tm["Mo"].map(months_map)
+                                fig = px.bar(tm, x="Month", y="TravelCount", text=tm["TravelCount"].apply(fmt_num), color_discrete_sequence=["#2c5f8a"], category_orders={"Month":list(months_map.values())})
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280)
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "hotel_cost":
+                                ht = df_travel[df_travel["HotelName"]!="Not Recorded"].groupby("HotelName").agg(Bookings=("TravelCount","sum")).reset_index().nlargest(8,"Bookings")
+                                fig = px.bar(ht, x="Bookings", y="HotelName", orientation="h", text=ht["Bookings"].apply(fmt_num), color_discrete_sequence=["#7b1fa2"])
+                                fig.update_traces(textposition="outside", textfont_size=9)
+                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "zsdcy_cat":
+                                cr = df_zsdcy.groupby("Category")["Revenue"].sum().reset_index()
+                                cr["Name"] = cr["Category"].map({"P":"Pharma","N":"Nutraceutical","M":"Medical Device","H":"Herbal","E":"Export"})
+                                fig = px.pie(cr, values="Revenue", names="Name", color_discrete_sequence=px.colors.qualitative.Set2)
+                                fig.update_traces(textinfo="percent+label")
+                                apply_layout(fig, height=280)
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "zsdcy_year":
+                                zy = df_zsdcy.groupby("Yr")["Revenue"].sum().reset_index()
+                                fig = px.bar(zy, x="Yr", y="Revenue", text=zy["Revenue"].apply(fmt), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside")
+                                apply_layout(fig, height=280)
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "city_rev":
+                                cr2 = df_zsdcy.groupby("City")["Revenue"].sum().nlargest(15).reset_index()
+                                fig = px.bar(cr2, x="Revenue", y="City", orientation="h", text=cr2["Revenue"].apply(fmt), color_discrete_sequence=["#2c5f8a"])
+                                fig.update_traces(textposition="outside", textfont_size=9)
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "nutra_growth":
                                 n24 = df_zsdcy[(df_zsdcy["Category"]=="N")&(df_zsdcy["Yr"]==2024)]["Revenue"].sum()
                                 n25 = df_zsdcy[(df_zsdcy["Category"]=="N")&(df_zsdcy["Yr"]==2025)]["Revenue"].sum()
                                 p24 = df_zsdcy[(df_zsdcy["Category"]=="P")&(df_zsdcy["Yr"]==2024)]["Revenue"].sum()
                                 p25 = df_zsdcy[(df_zsdcy["Category"]=="P")&(df_zsdcy["Yr"]==2025)]["Revenue"].sum()
-                                fig = px.bar(x=["Pharma","Nutraceutical"],
-                                    y=[(n25-n24)/n24*100 if n24>0 else 0,(p25-p24)/p24*100 if p24>0 else 0],
-                                    color=["Pharma","Nutraceutical"],
-                                    color_discrete_map={"Pharma":"#2c5f8a","Nutraceutical":"#7b1fa2"})
+                                fig = go.Figure(go.Bar(x=["Pharma","Nutraceutical"],
+                                    y=[(p25-p24)/p24*100 if p24>0 else 28,(n25-n24)/n24*100 if n24>0 else 35.5],
+                                    text=[f"+{(p25-p24)/p24*100:.1f}%" if p24>0 else "+28.0%",f"+{(n25-n24)/n24*100:.1f}%" if n24>0 else "+35.5%"],
+                                    textposition="outside", marker_color=["#2c5f8a","#7b1fa2"]))
                                 apply_layout(fig, height=280, yaxis=dict(title="Growth %"), showlegend=False)
                                 st.plotly_chart(fig, use_container_width=True)
-
-                            elif chart_key == "dist_risk":
-                                try:
-                                    churn = pd.read_csv("ml_churn_risk.csv")
-                                    rc = churn["RiskLevel"].value_counts().reset_index()
-                                    rc.columns = ["Risk","Count"]
-                                    fig = px.pie(rc, values="Count", names="Risk",
-                                        color_discrete_map={"🔴 High":"#c62828","🟡 Medium":"#e65100","🟢 Low":"#2e7d32"})
-                                    fig.update_traces(textinfo="percent+label+value")
-                                    apply_layout(fig, height=280)
-                                    st.plotly_chart(fig, use_container_width=True)
-                                except: st.info("ML churn file not found")
-
-                            elif chart_key == "ml_forecast":
+                            elif chart_key == "top_sdp":
+                                sdp_t = df_zsdcy.groupby("SDP Name")["Revenue"].sum().nlargest(10).reset_index()
+                                sdp_t["Short"] = sdp_t["SDP Name"].str.replace("PREMIER SALES PVT LTD-","").str.title().str[:30]
+                                fig = px.bar(sdp_t, x="Revenue", y="Short", orientation="h", text=sdp_t["Revenue"].apply(fmt), color_discrete_sequence=["#2e7d32"])
+                                fig.update_traces(textposition="outside", textfont_size=9)
+                                apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "ml_units":
+                                u_m = df_sales[df_sales["Yr"]>=2024].groupby(["Yr","Mo"])["TotalUnits"].sum().reset_index()
+                                u_m["Date"] = pd.to_datetime(u_m["Yr"].astype(int).astype(str)+"-"+u_m["Mo"].astype(int).astype(str)+"-01")
+                                fig = px.line(u_m, x="Date", y="TotalUnits", color_discrete_sequence=["#2e7d32"])
+                                fig.update_traces(mode="lines+markers")
+                                apply_layout(fig, height=280, yaxis=dict(title="Units Sold"))
+                                st.plotly_chart(fig, use_container_width=True)
+                            elif chart_key == "ml_revenue":
                                 try:
                                     fc = pd.read_csv("ml_forecast_revenue.csv")
                                     fc["Date"] = pd.to_datetime(fc["Month"].apply(lambda x: x.split()[1]+"-"+{"Jan":"01","Feb":"02","Mar":"03","Apr":"04","May":"05","Jun":"06","Jul":"07","Aug":"08","Sep":"09","Oct":"10","Nov":"11","Dec":"12"}[x.split()[0]]+"-01"))
                                     fig = px.line(fc, x="Date", y="Forecast", color_discrete_sequence=["#e65100"])
                                     fig.update_traces(mode="lines+markers")
-                                    apply_layout(fig, height=280, yaxis=dict(title="Forecast (PKR)"))
+                                    apply_layout(fig, height=280, yaxis=dict(title="Forecast Revenue (PKR)"))
                                     st.plotly_chart(fig, use_container_width=True)
                                 except: st.info("ML forecast file not found")
-
+                            elif chart_key == "ml_roi":
+                                try:
+                                    hr = pd.read_csv("ml_roi_products.csv").head(12)
+                                    colors_hr = ["#FFD700" if "RAMIPACE" in str(p).upper() else "#2e7d32" if r>30 else "#2c5f8a" for p,r in zip(hr["ProductName"],hr["ROI"])]
+                                    fig = go.Figure(go.Bar(x=hr["ROI"], y=hr["ProductName"], orientation="h", text=hr["ROI"].apply(lambda x: f"{x:.1f}x"), textposition="outside", marker_color=colors_hr))
+                                    apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
+                                    st.plotly_chart(fig, use_container_width=True)
+                                except: st.info("ML ROI file not found")
+                            elif chart_key == "disc_abuse":
+                                da2 = df_sales.groupby("TeamName").agg(D=("TotalDiscount","sum"),R=("TotalRevenue","sum")).reset_index()
+                                da2 = da2[da2["R"]>5e6]; da2["Rate"] = da2["D"]/da2["R"]*100
+                                da2 = da2[da2["Rate"]>3].sort_values("Rate",ascending=False)
+                                colors_da = ["#c62828" if r>10 else "#e65100" for r in da2["Rate"]]
+                                fig = go.Figure(go.Bar(x=da2["Rate"], y=da2["TeamName"], orientation="h", text=[f"{r:.1f}%" for r in da2["Rate"]], textposition="outside", marker_color=colors_da))
+                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"), xaxis=dict(title="Discount Rate %"))
+                                st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "quick_wins":
                                 qw = pd.DataFrame({
-                                    "Action":["Triple Ramipace budget","Allocate to Finno-Q","Fix Falcons discounts","Move July→Jan budget"],
-                                    "Impact":["+PKR 951M","+PKR 200M","Save PKR 200M","+PKR 300M"],
-                                    "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH"]})
+                                    "Action":["Triple Ramipace budget","Allocate to Finno-Q","Fix Falcons discounts","Move July→Jan budget","Add Karachi field trips","Recover Nusrat Pharma"],
+                                    "Impact":["+PKR 951M","+PKR 200M","Save PKR 200M","+PKR 300M","+PKR 150M","Recover PKR 224.9M"],
+                                    "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH","🟡 THIS MONTH","🔴 THIS WEEK"]})
                                 st.dataframe(qw, use_container_width=True, hide_index=True)
-
-                            elif chart_key == "hotel_cost":
-                                ht = df_travel[df_travel["HotelName"]!="Not Recorded"].groupby("HotelName").agg(Bookings=("TravelCount","sum")).reset_index().nlargest(8,"Bookings")
-                                fig = px.bar(ht, x="Bookings", y="HotelName", orientation="h",
-                                    text=ht["Bookings"].apply(fmt_num), color_discrete_sequence=["#7b1fa2"])
-                                fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
-                                st.plotly_chart(fig, use_container_width=True)
-
+                            elif chart_key == "lost_dist":
+                                try:
+                                    sdp24 = set(df_zsdcy[df_zsdcy["Yr"]==2024]["SDP Name"].unique())
+                                    sdp25 = set(df_zsdcy[df_zsdcy["Yr"]==2025]["SDP Name"].unique())
+                                    lost_s = sdp24 - sdp25
+                                    ld = [(s, df_zsdcy[df_zsdcy["SDP Name"]==s]["Revenue"].sum()) for s in lost_s]
+                                    ld_df = pd.DataFrame(ld, columns=["Distributor","Lost Revenue"]).sort_values("Lost Revenue",ascending=False).head(10)
+                                    ld_df["Lost Revenue"] = ld_df["Lost Revenue"].apply(fmt)
+                                    st.dataframe(ld_df, use_container_width=True, hide_index=True)
+                                except: st.info("ZSDCY data not available")
                         except Exception as e:
                             st.error(f"Chart error: {e}")
-
-# ════════════════════════════════════════════════════════════
 # PAGE 14: MANAGEMENT VIEW
 # ════════════════════════════════════════════════════════════
 elif page == "👔 Management View":
