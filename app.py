@@ -2005,211 +2005,473 @@ Every trip → PKR {rev_all_c/trips_all_c/1e6:.1f}M revenue
         st.markdown(f'<div style="background:{color_map[icon]};border-left:5px solid {border_map[icon]};border-radius:6px;padding:10px 15px;margin:6px 0;font-size:13px"><b>{icon} {title}:</b> {desc}</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════
 # PAGE 12: ML INTELLIGENCE
 # ════════════════════════════════════════════════════════════
 elif page == "🤖 ML Intelligence":
-    from sklearn.ensemble import GradientBoostingRegressor, RandomForestClassifier
+    from sklearn.ensemble import GradientBoostingRegressor
     import warnings
     warnings.filterwarnings("ignore")
 
     st.markdown("<h1 style='color:#2c5f8a'>🤖 ML Intelligence Center</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#555'>3 Machine Learning Models | Pharmevo 2020–2026 | Updated April 6, 2026</p>", unsafe_allow_html=True)
-    st.markdown(note("Models trained on verified SQL Server data. Forecast based on UNITS (millions) — the true leading indicator of business health."), unsafe_allow_html=True)
+    st.markdown("<p style='color:#555'>6 Forecasts | DSR Sales DB + ZSDCY Distribution DB | Gradient Boosting | April 2026</p>", unsafe_allow_html=True)
+    st.markdown(note("All forecasts trained on verified live SQL Server data 2020–2026. DSR = Secondary Sales. ZSDCY = Primary Distribution (factory → distributor)."), unsafe_allow_html=True)
 
     try:
         hist_roi  = pd.read_csv("ml_roi_products.csv")
-        churn_df  = pd.read_csv("ml_churn_risk.csv")
-        territory = pd.read_csv("ml_territory_scores.csv")
-        master_ml = pd.read_csv("ml_master.csv")
-        master_ml["Date"] = pd.to_datetime(master_ml["Date"])
         models_ok = True
     except:
         models_ok = False
-        st.error("ML model files not found. Please upload ml_roi_products.csv, ml_churn_risk.csv, ml_territory_scores.csv, ml_master.csv to GitHub.")
+        st.error("ML model files not found. Please upload ml_roi_products.csv to GitHub.")
 
     if models_ok:
 
-        # ── MODEL 1: UNITS FORECAST ──────────────────────────
-        st.markdown(sec("📦 Model 1 — 6-Month Units Forecast (Gradient Boosting)"), unsafe_allow_html=True)
-        st.markdown(note("Forecast based on UNITS SOLD (millions) — not revenue. Units are the true leading indicator. Revenue follows units. 2024 total: 66.5M units | 2025 total: 73.4M units | Trend: +10.3% YoY growth."), unsafe_allow_html=True)
+        # ── REUSABLE FORECAST FUNCTION ────────────────────────
+        def build_forecast(series_df, value_col, label, yoy_growth=1.103, n_months=6):
+            """Build 6-month GBR forecast with seasonal blending."""
+            df_f = series_df.copy().sort_values(["Yr","Mo"]).reset_index(drop=True)
+            df_f["Date"]  = pd.to_datetime(df_f["Yr"].astype(int).astype(str)+"-"+df_f["Mo"].astype(int).astype(str)+"-01")
+            df_f["lag1"]  = df_f[value_col].shift(1)
+            df_f["lag2"]  = df_f[value_col].shift(2)
+            df_f["lag3"]  = df_f[value_col].shift(3)
+            df_f["roll3"] = df_f[value_col].rolling(3).mean()
+            df_f["roll6"] = df_f[value_col].rolling(6).mean()
+            df_f["sin_m"] = np.sin(2*np.pi*df_f["Mo"]/12)
+            df_f["cos_m"] = np.cos(2*np.pi*df_f["Mo"]/12)
+            df_f["trend"] = np.arange(len(df_f))
+            feats = ["Yr","Mo","lag1","lag2","lag3","roll3","roll6","sin_m","cos_m","trend"]
+            train = df_f.dropna().copy()
+            gbr   = GradientBoostingRegressor(n_estimators=300, learning_rate=0.05, max_depth=4, random_state=42)
+            gbr.fit(train[feats], train[value_col])
+            last       = df_f.iloc[-1]
+            last_yr    = int(last["Yr"]); last_mo = int(last["Mo"]); last_tr = int(last["trend"])
+            history    = list(df_f[value_col].values)
+            forecasts  = []
+            for i in range(1, n_months+1):
+                mo = last_mo + i; yr = last_yr
+                if mo > 12: mo -= 12; yr += 1
+                same = df_f[(df_f["Yr"]==yr-1)&(df_f["Mo"]==mo)][value_col].values
+                base = same[0]*yoy_growth if len(same)>0 else history[-1]
+                row  = pd.DataFrame([[yr,mo,history[-1],history[-2],history[-3],
+                    np.mean(history[-3:]),np.mean(history[-6:]),
+                    np.sin(2*np.pi*mo/12),np.cos(2*np.pi*mo/12),last_tr+i]], columns=feats)
+                pred = max(gbr.predict(row)[0]*0.4 + base*0.6, base*0.95)
+                mo_n = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mo-1]
+                forecasts.append({"Month":f"{mo_n} {yr}","Date":pd.Timestamp(f"{yr}-{mo:02d}-01"),
+                    "Forecast":pred,"Upper":pred*1.10,"Lower":pred*0.90})
+                history.append(pred)
+            return df_f, pd.DataFrame(forecasts)
 
-        # Build units data from actual sales
-        try:
-            units_monthly = df_sales.groupby(["Yr","Mo"])["TotalUnits"].sum().reset_index()
-            units_monthly = units_monthly[units_monthly["Yr"] >= 2020].sort_values(["Yr","Mo"]).reset_index(drop=True)
-            units_monthly["Date"] = pd.to_datetime(
-                units_monthly["Yr"].astype(int).astype(str) + "-" +
-                units_monthly["Mo"].astype(int).astype(str) + "-01")
+        def forecast_chart(hist_df, fc_df, value_col, hist_label, fc_label,
+                           hist_color, fc_color, y_title, divisor, fmt_fn, title):
+            """Draw a forecast chart with history + forecast + confidence band."""
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=hist_df["Date"], y=hist_df[value_col]/divisor,
+                name=hist_label, mode="lines+markers",
+                line=dict(color=hist_color, width=2.5), marker=dict(size=5),
+                hovertemplate=f"%{{x|%b %Y}}: {fmt_fn}"+f"<extra></extra>"))
+            fig.add_trace(go.Scatter(
+                x=fc_df["Date"], y=fc_df["Forecast"]/divisor,
+                name=fc_label, mode="lines+markers",
+                line=dict(color=fc_color, width=2.5, dash="dash"),
+                marker=dict(size=9, symbol="diamond"),
+                hovertemplate=f"%{{x|%b %Y}}: {fmt_fn} forecast<extra></extra>"))
+            dates_b = pd.concat([fc_df["Date"], fc_df["Date"][::-1]])
+            vals_b  = pd.concat([fc_df["Upper"]/divisor, fc_df["Lower"][::-1]/divisor])
+            fig.add_trace(go.Scatter(x=dates_b, y=vals_b, fill="toself",
+                fillcolor=f"rgba{tuple(list(int(fc_color.lstrip('#')[i:i+2],16) for i in (0,2,4))+[0.12])}",
+                line=dict(color="rgba(0,0,0,0)"), name="±10% Band", hoverinfo="skip"))
+            apply_layout(fig, height=360, xaxis=dict(gridcolor="#eee"),
+                yaxis=dict(gridcolor="#eee", title=y_title), hovermode="x unified")
+            fig.update_layout(title=title)
+            return fig
 
-            # Feature engineering
-            units_monthly["lag1"]  = units_monthly["TotalUnits"].shift(1)
-            units_monthly["lag2"]  = units_monthly["TotalUnits"].shift(2)
-            units_monthly["lag3"]  = units_monthly["TotalUnits"].shift(3)
-            units_monthly["roll3"] = units_monthly["TotalUnits"].rolling(3).mean()
-            units_monthly["roll6"] = units_monthly["TotalUnits"].rolling(6).mean()
-            units_monthly["sin_m"] = np.sin(2*np.pi*units_monthly["Mo"]/12)
-            units_monthly["cos_m"] = np.cos(2*np.pi*units_monthly["Mo"]/12)
-            # Growth trend feature — captures upward trajectory
-            units_monthly["trend"] = np.arange(len(units_monthly))
-
-            train = units_monthly.dropna().copy()
-            features_u = ["Yr","Mo","lag1","lag2","lag3","roll3","roll6","sin_m","cos_m","trend"]
-            X_u = train[features_u]
-            y_u = train["TotalUnits"]
-
-            gbr = GradientBoostingRegressor(
-                n_estimators=300, learning_rate=0.05,
-                max_depth=4, random_state=42)
-            gbr.fit(X_u, y_u)
-
-            # Forecast 6 months with proper upward trend
-            last_row   = units_monthly.iloc[-1]
-            last_yr    = int(last_row["Yr"])
-            last_mo    = int(last_row["Mo"])
-            last_trend = int(last_row["trend"])
-            history_u  = list(units_monthly["TotalUnits"].values)
-
-            # Apply YoY growth factor from 2024→2025 (+10.3%)
-            yoy_growth_u = 1.103
-
-            unit_forecasts = []
-            for i in range(1, 7):
-                mo = last_mo + i
-                yr = last_yr
-                if mo > 12:
-                    mo -= 12
-                    yr += 1
-                trend_val = last_trend + i
-
-                # Find same month last year for seasonal reference
-                same_mo_last_yr = units_monthly[
-                    (units_monthly["Yr"]==yr-1) &
-                    (units_monthly["Mo"]==mo)]["TotalUnits"].values
-                seasonal_base = same_mo_last_yr[0] * yoy_growth_u if len(same_mo_last_yr)>0 else history_u[-1]
-
-                row = pd.DataFrame([[yr, mo,
-                    history_u[-1], history_u[-2], history_u[-3],
-                    np.mean(history_u[-3:]), np.mean(history_u[-6:]),
-                    np.sin(2*np.pi*mo/12), np.cos(2*np.pi*mo/12),
-                    trend_val]], columns=features_u)
-
-                pred_raw = gbr.predict(row)[0]
-                # Blend model prediction with seasonal growth estimate
-                pred = pred_raw * 0.4 + seasonal_base * 0.6
-                # Ensure prediction shows growth — floor at 10% above same month last year
-                pred = max(pred, seasonal_base * 0.98)
-
-                mo_name = ["Jan","Feb","Mar","Apr","May","Jun",
-                           "Jul","Aug","Sep","Oct","Nov","Dec"][mo-1]
-                unit_forecasts.append({
-                    "Month": f"{mo_name} {yr}",
-                    "Date": pd.Timestamp(f"{yr}-{mo:02d}-01"),
-                    "Units_M": pred/1e6,
-                    "Upper_M": (pred*1.08)/1e6,
-                    "Lower_M": (pred*0.92)/1e6,
-                })
-                history_u.append(pred)
-
-            fc_units = pd.DataFrame(unit_forecasts)
-            total_fc_units = sum(f["Units_M"] for f in unit_forecasts)
-
-        except Exception as e:
-            st.error(f"Units forecast error: {e}")
-            fc_units = pd.DataFrame()
-            total_fc_units = 0
-
-        if len(fc_units) > 0:
-            col1, col2 = st.columns([3,1])
-            with col1:
-                # Historical units chart
-                hist_u = units_monthly[units_monthly["Yr"]>=2023][["Date","TotalUnits"]].copy()
-
-                fig = go.Figure()
-                # Historical
-                fig.add_trace(go.Scatter(
-                    x=hist_u["Date"], y=hist_u["TotalUnits"]/1e6,
-                    name="Actual Units (M)", mode="lines+markers",
-                    line=dict(color="#2c5f8a", width=3),
-                    marker=dict(size=6),
-                    hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"))
-                # Forecast
-                fig.add_trace(go.Scatter(
-                    x=fc_units["Date"], y=fc_units["Units_M"],
-                    name="Forecast Units (M)", mode="lines+markers",
-                    line=dict(color="#2e7d32", width=3, dash="dash"),
-                    marker=dict(size=9, symbol="diamond", color="#2e7d32"),
-                    hovertemplate="%{x|%b %Y}: %{y:.2f}M units (forecast)<extra></extra>"))
-                # Confidence band
-                dates_b = pd.concat([fc_units["Date"], fc_units["Date"][::-1]])
-                vals_b  = pd.concat([fc_units["Upper_M"], fc_units["Lower_M"][::-1]])
-                fig.add_trace(go.Scatter(
-                    x=dates_b, y=vals_b, fill="toself",
-                    fillcolor="rgba(46,125,50,0.12)",
-                    line=dict(color="rgba(255,255,255,0)"),
-                    name="±8% Confidence", hoverinfo="skip"))
-                apply_layout(fig, height=400,
-                    xaxis=dict(gridcolor="#eee"),
-                    yaxis=dict(gridcolor="#eee", title="Units Sold (Millions)"),
-                    hovermode="x unified")
-                fig.update_layout(title="📦 Units Forecast — Apr to Sep 2026 (Growth Trend: +10.3% YoY)")
-                st.plotly_chart(fig, use_container_width=True)
-
-            with col2:
-                lines = "\n".join([f"{r['Month']}: {r['Units_M']:.2f}M units" for _,r in fc_units.iterrows()])
-                st.markdown(f"""<div class="manual-working">UNITS FORECAST
+        def summary_box(fc_df, value_col, divisor, unit_label, hist_total_label, hist_total):
+            lines = "\n".join([f"{r['Month']}: {r['Forecast']/divisor:.2f} {unit_label}" for _,r in fc_df.iterrows()])
+            total = fc_df["Forecast"].sum()/divisor
+            return f"""<div class="manual-working">6-MONTH FORECAST
 ══════════════════════
 Model : Gradient Boosting
-Basis : UNITS not revenue
-Trend : +10.3% YoY growth
+Trend : +10-15% YoY
 Data  : 2020-2026 SQL
 
 {lines}
 
-TOTAL : {total_fc_units:.1f}M units
+TOTAL : {total:.2f} {unit_label}
+H2 2025 actual : {hist_total} {unit_label}
+Projected growth: +{(total/hist_total-1)*100:.1f}%
+══════════════════════</div>"""
 
-2025 H2 actual: 37.3M units
-2026 H2 target: {total_fc_units:.1f}M units
-Growth: +{((total_fc_units/37.3)-1)*100:.1f}%
+        def forecast_table(fc_df, divisor, unit_label, show_rev=False, rev_price=321):
+            d = fc_df.copy()
+            d["Forecast"]    = d["Forecast"].apply(lambda x: f"{x/divisor:.2f} {unit_label}")
+            d["Lower Bound"] = d["Lower"].apply(lambda x: f"{x/divisor:.2f} {unit_label}")
+            d["Upper Bound"] = d["Upper"].apply(lambda x: f"{x/divisor:.2f} {unit_label}")
+            cols = ["Month","Forecast","Lower Bound","Upper Bound"]
+            if show_rev:
+                d["Est. Revenue"] = fc_df["Forecast"].apply(lambda x: fmt(x*rev_price))
+                cols.append("Est. Revenue")
+            return d[cols]
 
-Seasonal peaks:
-Oct/Nov/Dec = highest
-Apr/May = moderate
+        # ════════════════════════════════════════════════════
+        # SECTION A — DSR SECONDARY SALES FORECASTS
+        # ════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#e3f2fd;border-left:5px solid #1565c0;border-radius:8px;padding:12px 16px;margin:10px 0'>
+        <b style='font-size:16px;color:#1565c0'>📊 SECTION A — DSR Secondary Sales Database Forecasts</b><br>
+        <span style='color:#333;font-size:13px'>Source: DSR SQL Server | Database: PEVODSR | Table: SalesRawData | 
+        Columns used: <b>TotalRevenue</b> (revenue forecast) + <b>TotalUnits</b> (units forecast)</span>
+        </div>""", unsafe_allow_html=True)
+
+        # Build DSR data
+        dsr_rev   = df_sales.groupby(["Yr","Mo"])["TotalRevenue"].sum().reset_index()
+        dsr_units = df_sales.groupby(["Yr","Mo"])["TotalUnits"].sum().reset_index()
+
+        # ── DSR FORECAST 1: REVENUE ───────────────────────────
+        st.markdown(sec("📈 DSR Forecast 1 — Secondary Revenue (PKR Billions) | Column: TotalRevenue"), unsafe_allow_html=True)
+        st.markdown(note("Based on TotalRevenue column from SalesRawData table. 2024: PKR 20.21B | 2025: PKR 23.56B | Growth: +16.6% YoY. Blue = actual. Orange dashed = forecast."), unsafe_allow_html=True)
+        try:
+            hist_r, fc_r = build_forecast(dsr_rev, "TotalRevenue", "Revenue", yoy_growth=1.166)
+            hist_r_plot  = hist_r[hist_r["Yr"]>=2023]
+            col1, col2 = st.columns([3,1])
+            with col1:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=hist_r_plot["Date"], y=hist_r_plot["TotalRevenue"]/1e9,
+                    name="Actual Revenue (B PKR)", mode="lines+markers",
+                    line=dict(color="#2c5f8a",width=3), marker=dict(size=6),
+                    hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B<extra></extra>"))
+                fig.add_trace(go.Scatter(x=fc_r["Date"], y=fc_r["Forecast"]/1e9,
+                    name="Forecast Revenue", mode="lines+markers",
+                    line=dict(color="#e65100",width=3,dash="dash"),
+                    marker=dict(size=9,symbol="diamond"),
+                    hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B forecast<extra></extra>"))
+                db = pd.concat([fc_r["Date"], fc_r["Date"][::-1]])
+                vb = pd.concat([fc_r["Upper"]/1e9, fc_r["Lower"][::-1]/1e9])
+                fig.add_trace(go.Scatter(x=db, y=vb, fill="toself",
+                    fillcolor="rgba(230,81,0,0.10)", line=dict(color="rgba(0,0,0,0)"),
+                    name="±10% Band", hoverinfo="skip"))
+                apply_layout(fig, height=380, xaxis=dict(gridcolor="#eee"),
+                    yaxis=dict(gridcolor="#eee",title="Revenue (PKR Billions)"), hovermode="x unified")
+                fig.update_layout(title="DSR Revenue Forecast — Apr to Sep 2026 | +16.6% YoY Growth")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                h2_2025_rev = dsr_rev[(dsr_rev["Yr"]==2025)&(dsr_rev["Mo"]>=4)]["TotalRevenue"].sum()/1e9
+                lines_r = "\n".join([f"{r['Month']}: PKR {r['Forecast']/1e9:.2f}B" for _,r in fc_r.iterrows()])
+                total_r = fc_r["Forecast"].sum()/1e9
+                st.markdown(f"""<div class="manual-working">DSR REVENUE FORECAST
+══════════════════════
+Model : Gradient Boosting
+Source: DSR SQL Server
+Column: TotalRevenue
+Trend : +16.6% YoY
+
+{lines_r}
+
+TOTAL : PKR {total_r:.2f}B
+Apr-Sep 2025 act: PKR {h2_2025_rev:.2f}B
+Est. growth: +{(total_r/h2_2025_rev-1)*100:.1f}%
 ══════════════════════</div>""", unsafe_allow_html=True)
-
-            # Forecast table
-            fc_display = fc_units.copy()
-            fc_display["Forecast Units"] = fc_display["Units_M"].apply(lambda x: f"{x:.2f}M")
-            fc_display["Upper Bound"]    = fc_display["Upper_M"].apply(lambda x: f"{x:.2f}M")
-            fc_display["Lower Bound"]    = fc_display["Lower_M"].apply(lambda x: f"{x:.2f}M")
-            fc_display["Est. Revenue"]   = fc_display["Units_M"].apply(lambda x: fmt(x * 1e6 * 320))
-            st.dataframe(fc_display[["Month","Forecast Units","Lower Bound","Upper Bound","Est. Revenue"]],
-                use_container_width=True, hide_index=True)
-            st.markdown(note("Est. Revenue = Units × PKR 320 average selling price per unit (verified from 2025 data: PKR 23.56B / 73.4M units = PKR 321/unit)."), unsafe_allow_html=True)
+            fd_r = fc_r.copy()
+            fd_r["Revenue Forecast"] = fd_r["Forecast"].apply(lambda x: fmt(x))
+            fd_r["Lower Bound"]      = fd_r["Lower"].apply(lambda x: fmt(x))
+            fd_r["Upper Bound"]      = fd_r["Upper"].apply(lambda x: fmt(x))
+            st.dataframe(fd_r[["Month","Revenue Forecast","Lower Bound","Upper Bound"]], use_container_width=True, hide_index=True)
+        except Exception as e:
+            st.error(f"DSR Revenue forecast error: {e}")
 
         st.markdown("---")
 
-        # ── MODEL 2: ROI PREDICTOR ────────────────────────────
-        st.markdown(sec("💹 Model 2 — Promo ROI Predictor & Budget Simulator"), unsafe_allow_html=True)
-        st.markdown(note("Enter any budget amount and select a product — the model predicts expected revenue based on verified historical ROI. Gold bar = Ramipace (65.9x ROI)."), unsafe_allow_html=True)
+        # ── DSR FORECAST 2: UNITS ──────────────────────────────
+        st.markdown(sec("📦 DSR Forecast 2 — Secondary Units (Millions) | Column: TotalUnits"), unsafe_allow_html=True)
+        st.markdown(note("Based on TotalUnits column from SalesRawData table. 2024: 66.5M units | 2025: 73.4M units | Growth: +10.3% YoY. Blue = actual. Green dashed = forecast."), unsafe_allow_html=True)
+        try:
+            hist_u, fc_u = build_forecast(dsr_units, "TotalUnits", "Units", yoy_growth=1.103)
+            hist_u_plot  = hist_u[hist_u["Yr"]>=2023]
+            col1, col2 = st.columns([3,1])
+            with col1:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=hist_u_plot["Date"], y=hist_u_plot["TotalUnits"]/1e6,
+                    name="Actual Units (M)", mode="lines+markers",
+                    line=dict(color="#2c5f8a",width=3), marker=dict(size=6),
+                    hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"))
+                fig.add_trace(go.Scatter(x=fc_u["Date"], y=fc_u["Forecast"]/1e6,
+                    name="Forecast Units", mode="lines+markers",
+                    line=dict(color="#2e7d32",width=3,dash="dash"),
+                    marker=dict(size=9,symbol="diamond",color="#2e7d32"),
+                    hovertemplate="%{x|%b %Y}: %{y:.2f}M forecast<extra></extra>"))
+                db = pd.concat([fc_u["Date"], fc_u["Date"][::-1]])
+                vb = pd.concat([fc_u["Upper"]/1e6, fc_u["Lower"][::-1]/1e6])
+                fig.add_trace(go.Scatter(x=db, y=vb, fill="toself",
+                    fillcolor="rgba(46,125,50,0.10)", line=dict(color="rgba(0,0,0,0)"),
+                    name="±10% Band", hoverinfo="skip"))
+                apply_layout(fig, height=380, xaxis=dict(gridcolor="#eee"),
+                    yaxis=dict(gridcolor="#eee",title="Units Sold (Millions)"), hovermode="x unified")
+                fig.update_layout(title="DSR Units Forecast — Apr to Sep 2026 | +10.3% YoY Growth")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                h2_2025_u = dsr_units[(dsr_units["Yr"]==2025)&(dsr_units["Mo"]>=4)]["TotalUnits"].sum()/1e6
+                lines_u = "\n".join([f"{r['Month']}: {r['Forecast']/1e6:.2f}M units" for _,r in fc_u.iterrows()])
+                total_u = fc_u["Forecast"].sum()/1e6
+                st.markdown(f"""<div class="manual-working">DSR UNITS FORECAST
+══════════════════════
+Model : Gradient Boosting
+Source: DSR SQL Server
+Column: TotalUnits
+Trend : +10.3% YoY
+
+{lines_u}
+
+TOTAL : {total_u:.2f}M units
+Apr-Sep 2025 act: {h2_2025_u:.2f}M
+Est. growth: +{(total_u/h2_2025_u-1)*100:.1f}%
+
+PKR/unit = 321 (verified)
+Est. Revenue = {fmt(total_u*1e6*321)}
+══════════════════════</div>""", unsafe_allow_html=True)
+            fd_u = fc_u.copy()
+            fd_u["Units Forecast"] = fd_u["Forecast"].apply(lambda x: f"{x/1e6:.2f}M")
+            fd_u["Lower Bound"]    = fd_u["Lower"].apply(lambda x: f"{x/1e6:.2f}M")
+            fd_u["Upper Bound"]    = fd_u["Upper"].apply(lambda x: f"{x/1e6:.2f}M")
+            fd_u["Est. Revenue"]   = fd_u["Forecast"].apply(lambda x: fmt(x*321))
+            st.dataframe(fd_u[["Month","Units Forecast","Lower Bound","Upper Bound","Est. Revenue"]], use_container_width=True, hide_index=True)
+            st.markdown(note("Est. Revenue = Units × PKR 321 (verified: PKR 23.56B / 73.4M units = PKR 321/unit)."), unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"DSR Units forecast error: {e}")
+
+        st.markdown("---")
+
+        # ── DSR FORECAST 3: COMBINED CHART ────────────────────
+        st.markdown(sec("📊 DSR Forecast 3 — Combined: Revenue + Units on One Chart"), unsafe_allow_html=True)
+        st.markdown(note("Both forecasts on one dual-axis chart. Blue line = Revenue (left axis, PKR Billions). Green bars = Units (right axis, Millions). Orange dash = Revenue forecast. Purple dot = Units forecast."), unsafe_allow_html=True)
+        try:
+            hist_rev_c   = df_sales[df_sales["Yr"]>=2023].groupby("Date")["TotalRevenue"].sum().reset_index()
+            hist_units_c = df_sales[df_sales["Yr"]>=2023].groupby("Date")["TotalUnits"].sum().reset_index()
+            fig_c = make_subplots(specs=[[{"secondary_y":True}]])
+            fig_c.add_trace(go.Scatter(x=hist_rev_c["Date"], y=hist_rev_c["TotalRevenue"]/1e9,
+                name="Actual Revenue (B PKR)", mode="lines+markers",
+                line=dict(color="#2c5f8a",width=2.5), marker=dict(size=5),
+                hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B<extra></extra>"), secondary_y=False)
+            fig_c.add_trace(go.Bar(x=hist_units_c["Date"], y=hist_units_c["TotalUnits"]/1e6,
+                name="Actual Units (M)", opacity=0.35, marker_color="#2e7d32",
+                hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"), secondary_y=True)
+            if 'fc_r' in dir() and 'fc_u' in dir():
+                fig_c.add_trace(go.Scatter(x=fc_r["Date"], y=fc_r["Forecast"]/1e9,
+                    name="Revenue Forecast", mode="lines+markers",
+                    line=dict(color="#e65100",width=2.5,dash="dash"),
+                    marker=dict(size=8,symbol="diamond"),
+                    hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B forecast<extra></extra>"), secondary_y=False)
+                fig_c.add_trace(go.Scatter(x=fc_u["Date"], y=fc_u["Forecast"]/1e6,
+                    name="Units Forecast", mode="lines+markers",
+                    line=dict(color="#7b1fa2",width=2.5,dash="dot"),
+                    marker=dict(size=8,symbol="circle"),
+                    hovertemplate="%{x|%b %Y}: %{y:.2f}M units forecast<extra></extra>"), secondary_y=True)
+            apply_layout(fig_c, height=460, hovermode="x unified",
+                xaxis=dict(gridcolor="#eee"),
+                legend=dict(bgcolor="white",bordercolor="#ddd",borderwidth=1))
+            fig_c.update_yaxes(title_text="Revenue (PKR Billions)", gridcolor="#eee", secondary_y=False)
+            fig_c.update_yaxes(title_text="Units Sold (Millions)", gridcolor="#eee", secondary_y=True)
+            fig_c.update_layout(title="📈 DSR Combined — Revenue + Units: Actual History & 6-Month Forecast", barmode="overlay")
+            st.plotly_chart(fig_c, use_container_width=True)
+            if 'fc_r' in dir() and 'fc_u' in dir():
+                c1,c2,c3,c4 = st.columns(4)
+                c1.markdown(kpi("6M Revenue Forecast", fmt(fc_r["Forecast"].sum()), "Apr–Sep 2026"), unsafe_allow_html=True)
+                c2.markdown(kpi("6M Units Forecast", f"{fc_u['Forecast'].sum()/1e6:.1f}M", "Apr–Sep 2026"), unsafe_allow_html=True)
+                c3.markdown(kpi("Avg Price/Unit","PKR 321","Verified from 2025 data"), unsafe_allow_html=True)
+                c4.markdown(kpi("Revenue Growth","DSR +16.6%","2024 → 2025 YoY"), unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"Combined DSR chart error: {e}")
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════
+        # SECTION B — ZSDCY PRIMARY DISTRIBUTION FORECASTS
+        # ════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#e8f5e9;border-left:5px solid #2e7d32;border-radius:8px;padding:12px 16px;margin:10px 0'>
+        <b style='font-size:16px;color:#2e7d32'>📦 SECTION B — ZSDCY Primary Distribution Database Forecasts</b><br>
+        <span style='color:#333;font-size:13px'>Source: SAP Export CSV | File: zsdcy_clean.csv | 
+        Columns used: <b>Revenue</b> (revenue forecast) + <b>Qty</b> (quantity/units forecast) | 
+        2024: PKR 7.58B / 25.3M units | 2025: PKR 9.76B / 28.9M units</span>
+        </div>""", unsafe_allow_html=True)
+
+        if len(df_zsdcy) > 0:
+            zsdcy_rev = df_zsdcy.groupby(["Yr","Mo"])["Revenue"].sum().reset_index()
+            zsdcy_qty = df_zsdcy.groupby(["Yr","Mo"])["Qty"].sum().reset_index()
+            zsdcy_rev["Yr"] = zsdcy_rev["Yr"].astype(int)
+            zsdcy_qty["Yr"] = zsdcy_qty["Yr"].astype(int)
+
+            # ── ZSDCY FORECAST 4: REVENUE ──────────────────────
+            st.markdown(sec("🏭 ZSDCY Forecast 4 — Primary Revenue (PKR Billions) | Column: Revenue"), unsafe_allow_html=True)
+            st.markdown(note("Factory → Distributor revenue. 2024: PKR 7.58B | 2025: PKR 9.76B | Growth: +28.7% YoY. This is BEFORE the secondary markup. Purple = actual. Orange dashed = forecast."), unsafe_allow_html=True)
+            try:
+                hist_zr, fc_zr = build_forecast(zsdcy_rev, "Revenue", "ZSDCY Rev", yoy_growth=1.287)
+                hist_zr_plot   = hist_zr[hist_zr["Yr"]>=2024]
+                col1, col2 = st.columns([3,1])
+                with col1:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist_zr_plot["Date"], y=hist_zr_plot["Revenue"]/1e9,
+                        name="Actual Primary Revenue", mode="lines+markers",
+                        line=dict(color="#7b1fa2",width=3), marker=dict(size=6),
+                        hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B<extra></extra>"))
+                    fig.add_trace(go.Scatter(x=fc_zr["Date"], y=fc_zr["Forecast"]/1e9,
+                        name="Primary Revenue Forecast", mode="lines+markers",
+                        line=dict(color="#e65100",width=3,dash="dash"),
+                        marker=dict(size=9,symbol="diamond"),
+                        hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B forecast<extra></extra>"))
+                    db = pd.concat([fc_zr["Date"], fc_zr["Date"][::-1]])
+                    vb = pd.concat([fc_zr["Upper"]/1e9, fc_zr["Lower"][::-1]/1e9])
+                    fig.add_trace(go.Scatter(x=db, y=vb, fill="toself",
+                        fillcolor="rgba(230,81,0,0.10)", line=dict(color="rgba(0,0,0,0)"),
+                        name="±10% Band", hoverinfo="skip"))
+                    apply_layout(fig, height=360, xaxis=dict(gridcolor="#eee"),
+                        yaxis=dict(gridcolor="#eee",title="Primary Revenue (PKR Billions)"), hovermode="x unified")
+                    fig.update_layout(title="ZSDCY Primary Revenue Forecast — +28.7% YoY Growth")
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    lines_zr = "\n".join([f"{r['Month']}: PKR {r['Forecast']/1e9:.2f}B" for _,r in fc_zr.iterrows()])
+                    total_zr = fc_zr["Forecast"].sum()/1e9
+                    st.markdown(f"""<div class="manual-working">ZSDCY REVENUE FORECAST
+══════════════════════
+Model : Gradient Boosting
+Source: ZSDCY CSV
+Column: Revenue
+Trend : +28.7% YoY
+
+{lines_zr}
+
+TOTAL : PKR {total_zr:.2f}B
+2025 full year: PKR 9.76B
+Growth rate: +28.7%
+══════════════════════</div>""", unsafe_allow_html=True)
+                fd_zr = fc_zr.copy()
+                fd_zr["Revenue Forecast"] = fd_zr["Forecast"].apply(lambda x: fmt(x))
+                fd_zr["Lower Bound"]      = fd_zr["Lower"].apply(lambda x: fmt(x))
+                fd_zr["Upper Bound"]      = fd_zr["Upper"].apply(lambda x: fmt(x))
+                st.dataframe(fd_zr[["Month","Revenue Forecast","Lower Bound","Upper Bound"]], use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"ZSDCY Revenue forecast error: {e}")
+
+            st.markdown("---")
+
+            # ── ZSDCY FORECAST 5: QTY ──────────────────────────
+            st.markdown(sec("📦 ZSDCY Forecast 5 — Primary Quantity / Units (Millions) | Column: Qty"), unsafe_allow_html=True)
+            st.markdown(note("Factory → Distributor units shipped. 2024: 25.3M units | 2025: 28.9M units | Growth: +14.2% YoY. Green = actual. Purple dashed = forecast."), unsafe_allow_html=True)
+            try:
+                hist_zq, fc_zq = build_forecast(zsdcy_qty, "Qty", "ZSDCY Qty", yoy_growth=1.142)
+                hist_zq_plot   = hist_zq[hist_zq["Yr"]>=2024]
+                col1, col2 = st.columns([3,1])
+                with col1:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist_zq_plot["Date"], y=hist_zq_plot["Qty"]/1e6,
+                        name="Actual Primary Qty (M)", mode="lines+markers",
+                        line=dict(color="#2e7d32",width=3), marker=dict(size=6),
+                        hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"))
+                    fig.add_trace(go.Scatter(x=fc_zq["Date"], y=fc_zq["Forecast"]/1e6,
+                        name="Qty Forecast", mode="lines+markers",
+                        line=dict(color="#7b1fa2",width=3,dash="dash"),
+                        marker=dict(size=9,symbol="diamond"),
+                        hovertemplate="%{x|%b %Y}: %{y:.2f}M forecast<extra></extra>"))
+                    db = pd.concat([fc_zq["Date"], fc_zq["Date"][::-1]])
+                    vb = pd.concat([fc_zq["Upper"]/1e6, fc_zq["Lower"][::-1]/1e6])
+                    fig.add_trace(go.Scatter(x=db, y=vb, fill="toself",
+                        fillcolor="rgba(123,31,162,0.10)", line=dict(color="rgba(0,0,0,0)"),
+                        name="±10% Band", hoverinfo="skip"))
+                    apply_layout(fig, height=360, xaxis=dict(gridcolor="#eee"),
+                        yaxis=dict(gridcolor="#eee",title="Primary Quantity (Millions)"), hovermode="x unified")
+                    fig.update_layout(title="ZSDCY Primary Quantity Forecast — +14.2% YoY Growth")
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    lines_zq = "\n".join([f"{r['Month']}: {r['Forecast']/1e6:.2f}M units" for _,r in fc_zq.iterrows()])
+                    total_zq = fc_zq["Forecast"].sum()/1e6
+                    st.markdown(f"""<div class="manual-working">ZSDCY QTY FORECAST
+══════════════════════
+Model : Gradient Boosting
+Source: ZSDCY CSV
+Column: Qty
+Trend : +14.2% YoY
+
+{lines_zq}
+
+TOTAL : {total_zq:.2f}M units
+2025 full year: 28.9M units
+Growth: +14.2%
+══════════════════════</div>""", unsafe_allow_html=True)
+                fd_zq = fc_zq.copy()
+                fd_zq["Qty Forecast"] = fd_zq["Forecast"].apply(lambda x: f"{x/1e6:.2f}M")
+                fd_zq["Lower Bound"]  = fd_zq["Lower"].apply(lambda x: f"{x/1e6:.2f}M")
+                fd_zq["Upper Bound"]  = fd_zq["Upper"].apply(lambda x: f"{x/1e6:.2f}M")
+                st.dataframe(fd_zq[["Month","Qty Forecast","Lower Bound","Upper Bound"]], use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"ZSDCY Qty forecast error: {e}")
+
+            st.markdown("---")
+
+            # ── ZSDCY FORECAST 6: COMBINED ─────────────────────
+            st.markdown(sec("🏭 ZSDCY Forecast 6 — Combined: Primary Revenue + Quantity"), unsafe_allow_html=True)
+            st.markdown(note("Purple line = Primary Revenue (left axis, PKR Billions). Green bars = Primary Qty (right axis, Millions). Orange dashed = Revenue forecast. Blue dotted = Qty forecast."), unsafe_allow_html=True)
+            try:
+                hist_zr2 = df_zsdcy.groupby(["Yr","Mo"]).agg(Revenue=("Revenue","sum"),Qty=("Qty","sum")).reset_index()
+                hist_zr2["Yr"] = hist_zr2["Yr"].astype(int)
+                hist_zr2["Date"] = pd.to_datetime(hist_zr2["Yr"].astype(str)+"-"+hist_zr2["Mo"].astype(int).astype(str)+"-01")
+                hist_zr2_plot = hist_zr2[hist_zr2["Yr"]>=2024]
+                fig_zc = make_subplots(specs=[[{"secondary_y":True}]])
+                fig_zc.add_trace(go.Scatter(x=hist_zr2_plot["Date"], y=hist_zr2_plot["Revenue"]/1e9,
+                    name="Actual Primary Revenue", mode="lines+markers",
+                    line=dict(color="#7b1fa2",width=2.5), marker=dict(size=5),
+                    hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B<extra></extra>"), secondary_y=False)
+                fig_zc.add_trace(go.Bar(x=hist_zr2_plot["Date"], y=hist_zr2_plot["Qty"]/1e6,
+                    name="Actual Primary Qty (M)", opacity=0.35, marker_color="#2e7d32",
+                    hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"), secondary_y=True)
+                if 'fc_zr' in dir() and 'fc_zq' in dir():
+                    fig_zc.add_trace(go.Scatter(x=fc_zr["Date"], y=fc_zr["Forecast"]/1e9,
+                        name="Revenue Forecast", mode="lines+markers",
+                        line=dict(color="#e65100",width=2.5,dash="dash"),
+                        marker=dict(size=8,symbol="diamond"),
+                        hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B forecast<extra></extra>"), secondary_y=False)
+                    fig_zc.add_trace(go.Scatter(x=fc_zq["Date"], y=fc_zq["Forecast"]/1e6,
+                        name="Qty Forecast", mode="lines+markers",
+                        line=dict(color="#2c5f8a",width=2.5,dash="dot"),
+                        marker=dict(size=8,symbol="circle"),
+                        hovertemplate="%{x|%b %Y}: %{y:.2f}M forecast<extra></extra>"), secondary_y=True)
+                apply_layout(fig_zc, height=460, hovermode="x unified",
+                    xaxis=dict(gridcolor="#eee"),
+                    legend=dict(bgcolor="white",bordercolor="#ddd",borderwidth=1))
+                fig_zc.update_yaxes(title_text="Primary Revenue (PKR Billions)", gridcolor="#eee", secondary_y=False)
+                fig_zc.update_yaxes(title_text="Primary Qty (Millions)", gridcolor="#eee", secondary_y=True)
+                fig_zc.update_layout(title="📦 ZSDCY Combined — Primary Revenue + Qty: History & Forecast", barmode="overlay")
+                st.plotly_chart(fig_zc, use_container_width=True)
+                if 'fc_zr' in dir() and 'fc_zq' in dir():
+                    c1,c2,c3,c4 = st.columns(4)
+                    c1.markdown(kpi("6M Primary Rev FC", fmt(fc_zr["Forecast"].sum()), "ZSDCY Apr–Sep 2026"), unsafe_allow_html=True)
+                    c2.markdown(kpi("6M Primary Qty FC", f"{fc_zq['Forecast'].sum()/1e6:.1f}M", "ZSDCY units"), unsafe_allow_html=True)
+                    c3.markdown(kpi("Primary Rev Growth","+28.7%","2024 → 2025 YoY"), unsafe_allow_html=True)
+                    c4.markdown(kpi("Primary Qty Growth","+14.2%","2024 → 2025 YoY"), unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"ZSDCY Combined chart error: {e}")
+
+        else:
+            st.warning("⚠️ ZSDCY data not loaded. Please upload zsdcy_clean.csv to GitHub for ZSDCY forecasts.")
+
+        st.markdown("---")
+
+        # ── ROI PREDICTOR ─────────────────────────────────────
+        st.markdown(sec("💹 Budget Simulator — Enter Budget → Get Expected Revenue"), unsafe_allow_html=True)
+        st.markdown(note("Based on verified historical ROI from DSR + FTTS databases. Gold = Ramipace (65.9x ROI)."), unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
             top_roi = hist_roi.head(15)
             colors_roi = ["#FFD700" if "RAMIPACE" in str(p).upper()
                           else "#2e7d32" if r>30 else "#2c5f8a"
-                          for p,r in zip(top_roi["ProductName"], top_roi["ROI"])]
-            fig = go.Figure(go.Bar(
-                x=top_roi["ROI"], y=top_roi["ProductName"], orientation="h",
+                          for p,r in zip(top_roi["ProductName"],top_roi["ROI"])]
+            fig = go.Figure(go.Bar(x=top_roi["ROI"], y=top_roi["ProductName"], orientation="h",
                 text=top_roi["ROI"].apply(lambda x: f"{x:.1f}x"),
-                textposition="outside", textfont_size=10,
-                marker_color=colors_roi))
-            apply_layout(fig, height=480,
-                yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                xaxis=dict(gridcolor="#eee", title="ROI (Revenue / Promo Spend)"))
+                textposition="outside", textfont_size=10, marker_color=colors_roi))
+            apply_layout(fig, height=480, yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                xaxis=dict(gridcolor="#eee",title="ROI (Revenue / Promo Spend)"))
             fig.update_layout(title="Top 15 Products by ROI — Gold = Ramipace 65.9x")
             st.plotly_chart(fig, use_container_width=True)
         with col2:
             st.markdown("### 🎯 Budget Simulator")
-            st.markdown(note("Enter a budget → see expected revenue return based on product's verified historical ROI."), unsafe_allow_html=True)
             budget_input = st.number_input("Enter Budget (PKR)", min_value=100000, max_value=50000000, value=5000000, step=500000, key="ml_budget")
             prod_list = sorted(hist_roi["ProductName"].unique())
             prod_sel  = st.selectbox("Select Product", prod_list,
@@ -2230,213 +2492,84 @@ Expected Units  : {expected_units/1e6:.2f}M units
 Upper (+20%)    : {fmt(expected_rev*1.2)}
 Lower (-20%)    : {fmt(expected_rev*0.8)}
 
-For every PKR 1 invested:
-→ PKR {h_roi:.1f} revenue returned
-→ {expected_units/budget_input*1000:.0f} units per PKR 1,000
+PKR 1 invested → PKR {h_roi:.1f} returned
+{expected_units/budget_input*1000:.0f} units per PKR 1,000
 ══════════════════════════════</div>""", unsafe_allow_html=True)
-
-                # Visual comparison
                 fig2 = go.Figure(go.Bar(
-                    x=["Budget Invested", "Expected Revenue"],
+                    x=["Budget Invested","Expected Revenue"],
                     y=[budget_input/1e6, expected_rev/1e6],
                     text=[fmt(budget_input), fmt(expected_rev)],
                     textposition="outside", textfont_size=13,
                     marker_color=["#e65100","#2e7d32"]))
-                apply_layout(fig2, height=280,
-                    xaxis=dict(gridcolor="#eee"),
-                    yaxis=dict(gridcolor="#eee", title="PKR Millions"),
-                    showlegend=False)
+                apply_layout(fig2, height=280, xaxis=dict(gridcolor="#eee"),
+                    yaxis=dict(gridcolor="#eee",title="PKR Millions"), showlegend=False)
                 fig2.update_layout(title=f"{prod_sel}: {h_roi:.1f}x Return")
                 st.plotly_chart(fig2, use_container_width=True)
-
-        # ── COMBINED UNITS + REVENUE CHART ───────────────────
-        st.markdown("---")
-        st.markdown(sec("📊 Combined Forecast — Units & Revenue on One Chart"), unsafe_allow_html=True)
-        st.markdown(note("Blue line = Actual monthly revenue (PKR Billions). Green bars = Actual monthly units sold (Millions). Orange dashed = Revenue forecast. Purple dashed = Units forecast. Both on same chart for complete business picture."), unsafe_allow_html=True)
-
-        if len(fc_units) > 0:
-            # Historical data
-            hist_rev_m = df_sales[df_sales["Yr"]>=2023].groupby("Date")["TotalRevenue"].sum().reset_index()
-            hist_units_m = df_sales[df_sales["Yr"]>=2023].groupby("Date")["TotalUnits"].sum().reset_index()
-
-            fig_combined = make_subplots(specs=[[{"secondary_y": True}]])
-
-            # Historical Revenue — blue line
-            fig_combined.add_trace(go.Scatter(
-                x=hist_rev_m["Date"], y=hist_rev_m["TotalRevenue"]/1e9,
-                name="Actual Revenue (B PKR)", mode="lines+markers",
-                line=dict(color="#2c5f8a", width=2.5),
-                marker=dict(size=5),
-                hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B<extra></extra>"),
-                secondary_y=False)
-
-            # Historical Units — green bars
-            fig_combined.add_trace(go.Bar(
-                x=hist_units_m["Date"], y=hist_units_m["TotalUnits"]/1e6,
-                name="Actual Units (M)", opacity=0.4,
-                marker_color="#2e7d32",
-                hovertemplate="%{x|%b %Y}: %{y:.2f}M units<extra></extra>"),
-                secondary_y=True)
-
-            # Forecast Revenue — orange dashed
-            fc_rev_vals = fc_units["Units_M"] * 321  # PKR per unit
-            fig_combined.add_trace(go.Scatter(
-                x=fc_units["Date"], y=fc_rev_vals/1e3,  # B PKR
-                name="Forecast Revenue (B PKR)", mode="lines+markers",
-                line=dict(color="#e65100", width=2.5, dash="dash"),
-                marker=dict(size=8, symbol="diamond"),
-                hovertemplate="%{x|%b %Y}: PKR %{y:.2f}B forecast<extra></extra>"),
-                secondary_y=False)
-
-            # Forecast Units — purple dashed
-            fig_combined.add_trace(go.Scatter(
-                x=fc_units["Date"], y=fc_units["Units_M"],
-                name="Forecast Units (M)", mode="lines+markers",
-                line=dict(color="#7b1fa2", width=2.5, dash="dot"),
-                marker=dict(size=8, symbol="circle"),
-                hovertemplate="%{x|%b %Y}: %{y:.2f}M units forecast<extra></extra>"),
-                secondary_y=True)
-
-            apply_layout(fig_combined, height=450,
-                hovermode="x unified",
-                xaxis=dict(gridcolor="#eee", title="Month"),
-                legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
-            fig_combined.update_yaxes(title_text="Revenue (PKR Billions)", gridcolor="#eee", secondary_y=False)
-            fig_combined.update_yaxes(title_text="Units Sold (Millions)",  gridcolor="#eee", secondary_y=True)
-            fig_combined.update_layout(title="📈 Complete Business Picture — Revenue + Units (Actual & Forecast)", barmode="overlay")
-            st.plotly_chart(fig_combined, use_container_width=True)
-
-            # Summary KPIs
-            c1,c2,c3,c4 = st.columns(4)
-            c1.markdown(kpi("6-Month Unit Forecast", f"{total_fc_units:.1f}M", "Apr–Sep 2026 units"), unsafe_allow_html=True)
-            c2.markdown(kpi("Est. 6-Month Revenue",  fmt(total_fc_units*1e6*321), "At PKR 321/unit avg"), unsafe_allow_html=True)
-            c3.markdown(kpi("Units Growth 2025",     "+10.3%", "66.5M → 73.4M units"), unsafe_allow_html=True)
-            c4.markdown(kpi("Revenue/Unit",          "PKR 321", "Avg selling price verified"), unsafe_allow_html=True)
-
 
 # ════════════════════════════════════════════════════════════
 # PAGE 13: PERSONAL DASHBOARD
 # ════════════════════════════════════════════════════════════
 elif page == "📌 Personal Dashboard":
     st.markdown("<h1 style='color:#2c5f8a'>📌 Personal Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666'>Your personal view — 18 live KPI tiles always shown + choose any charts from all 4 databases.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#666'>Build your own view — select any KPIs and charts from all 4 databases.</p>", unsafe_allow_html=True)
     st.markdown("---")
 
-    # ── LIVE KPI TILES — ALWAYS SHOWN ──────────────────────
-    st.markdown("### 📌 Live KPI Tiles — Updated from SQL Data")
-    rev_24_pd = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
-    rev_25_pd = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
-    rev_26_pd = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
-    sp_24_pd  = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
-    sp_25_pd  = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
-    roi_24_pd = rev_24_pd/sp_24_pd if sp_24_pd>0 else 0
-    roi_25_pd = rev_25_pd/sp_25_pd if sp_25_pd>0 else 0
-    units_24_pd = df_sales[df_sales["Yr"]==2024]["TotalUnits"].sum()
-    units_25_pd = df_sales[df_sales["Yr"]==2025]["TotalUnits"].sum()
-    trips_24_pd = df_travel[df_travel["Yr"]==2024]["TravelCount"].sum()
-    trips_25_pd = df_travel[df_travel["Yr"]==2025]["TravelCount"].sum()
-    disc_pd     = df_sales["TotalDiscount"].sum()
-    top_prod_pd = df_sales.groupby("ProductName")["TotalRevenue"].sum().idxmax()
-    inv_25_pd   = df_sales[df_sales["Yr"]==2025]["InvoiceCount"].sum()
-
-    st.markdown("**📈 Revenue & Growth**")
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.markdown(kpi("Revenue 2024",    fmt(rev_24_pd),   "Full year"), unsafe_allow_html=True)
-    c2.markdown(kpi("Revenue 2025",    fmt(rev_25_pd),   f"+{(rev_25_pd-rev_24_pd)/rev_24_pd*100:.1f}% YoY"), unsafe_allow_html=True)
-    c3.markdown(kpi("Revenue 2026 YTD",fmt(rev_26_pd),   "Jan–Apr 2026"), unsafe_allow_html=True)
-    c4.markdown(kpi("Run Rate 2026",   fmt(rev_26_pd/4*12),"If current pace holds"), unsafe_allow_html=True)
-    c5.markdown(kpi("Revenue Growth",  f"+{(rev_25_pd-rev_24_pd)/rev_24_pd*100:.1f}%","2024 → 2025"), unsafe_allow_html=True)
-    c6.markdown(kpi("Total Revenue",   fmt(df_sales["TotalRevenue"].sum()),"All years combined"), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**📦 Units & Invoices**")
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.markdown(kpi("Units 2024",      fmt_num(units_24_pd), "66.5M units"), unsafe_allow_html=True)
-    c2.markdown(kpi("Units 2025",      fmt_num(units_25_pd), "+10.3% vs 2024"), unsafe_allow_html=True)
-    c3.markdown(kpi("Invoices 2025",   fmt_num(inv_25_pd),   "Jan–Dec 2025"), unsafe_allow_html=True)
-    c4.markdown(kpi("Avg Rev/Unit",    "PKR 321",            "Verified 2025"), unsafe_allow_html=True)
-    c5.markdown(kpi("Top Product",     top_prod_pd[:15],     "Highest revenue"), unsafe_allow_html=True)
-    c6.markdown(kpi("Fastest Grower",  "Erlina Plus XR",     "+699% growth"), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**💰 Promotions & ROI**")
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.markdown(kpi("Promo 2024",      fmt(sp_24_pd),        "Activities DB"), unsafe_allow_html=True)
-    c2.markdown(kpi("Promo 2025",      fmt(sp_25_pd),        "+38.2% vs 2024"), unsafe_allow_html=True)
-    c3.markdown(kpi("ROI 2024",        f"{roi_24_pd:.1f}x",  "Baseline"), unsafe_allow_html=True)
-    c4.markdown(kpi("ROI 2025",        f"{roi_25_pd:.1f}x",  "⚠️ Declining", red=True), unsafe_allow_html=True)
-    c5.markdown(kpi("Best ROI",        "Ramipace 65.9x",     "PKR 14.4M→951M"), unsafe_allow_html=True)
-    c6.markdown(kpi("Total Discounts", fmt(disc_pd),          "⚠️ Fix Falcons 20.5%", red=True), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**✈️ Field Activity**")
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.markdown(kpi("Trips 2024",      fmt_num(trips_24_pd), "Field visits"), unsafe_allow_html=True)
-    c2.markdown(kpi("Trips 2025",      fmt_num(trips_25_pd), "+2.0% vs 2024"), unsafe_allow_html=True)
-    c3.markdown(kpi("Top City Visits", "Lahore",             "1,566 trips"), unsafe_allow_html=True)
-    c4.markdown(kpi("Div 1 Activity",  "82 trips/person",    "Best division"), unsafe_allow_html=True)
-    c5.markdown(kpi("Div 4 Activity",  "16 trips/person",    "🔴 5x below Div 1", red=True), unsafe_allow_html=True)
-    c6.markdown(kpi("Top Hotel",       "Indigo Heights",     "880+ bookings"), unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**📦 Distribution (ZSDCY)**")
-    zrev_24_pd = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum() if len(df_zsdcy)>0 else 0
-    zrev_25_pd = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum() if len(df_zsdcy)>0 else 0
-    top_city_pd= df_zsdcy.groupby("City")["Revenue"].sum().idxmax() if len(df_zsdcy)>0 else "Karachi"
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.markdown(kpi("Primary 2024",    fmt(zrev_24_pd),    "ZSDCY DB"), unsafe_allow_html=True)
-    c2.markdown(kpi("Primary 2025",    fmt(zrev_25_pd),    "+28.7% YoY"), unsafe_allow_html=True)
-    c3.markdown(kpi("Top City",        top_city_pd,        "PKR 872M revenue"), unsafe_allow_html=True)
-    c4.markdown(kpi("Nutra Growth",    "+35.5%",           "vs Pharma +28%"), unsafe_allow_html=True)
-    c5.markdown(kpi("Lost Distrib.",   "26",               "PKR 91.6M gone", red=True), unsafe_allow_html=True)
-    c6.markdown(kpi("Nusrat Pharma",   "PKR 224.9M",       "🔴 Account lost", red=True), unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # ── CHART SELECTOR ─────────────────────────────────────
     all_charts = {
-        "📈 Revenue Trend (Monthly)"            : "rev_trend",
-        "📊 Revenue by Year"                    : "rev_year",
-        "🏆 Top 10 Products by Revenue"         : "top_products",
-        "⚠️ Bottom 10 Products by Revenue"      : "bot_products",
-        "👥 Top 10 Teams by Revenue"            : "top_teams",
-        "⚠️ Bottom 10 Teams by Revenue"         : "bot_teams",
-        "🚀 Fastest Growing Products"           : "fast_grow",
-        "📉 Slowest Growing Products"           : "slow_grow",
-        "📅 Sales Seasonality Heatmap"          : "seasonality",
-        "📦 Units Sold by Year"                 : "units_year",
-        "🧾 Invoice Count by Year"              : "invoice_year",
-        "💸 Discount Rate by Team"              : "disc_team",
-        "📈 Revenue 2024 vs 2025 Compare"       : "rev_compare",
-        "💰 Promo Spend by Year"                : "promo_year",
-        "💰 Promo Spend by Team"                : "promo_team",
-        "💰 Promo Spend by Product"             : "promo_prod",
-        "💰 Promo Spend by Activity Type"       : "promo_type",
-        "⏰ Promo Timing vs Sales Rank"         : "promo_timing",
-        "💹 Promo vs Revenue Monthly"           : "promo_rev",
-        "📊 ROI by Product (Top 15)"            : "roi_products",
-        "📊 ROI by Team"                        : "roi_team",
-        "📊 ROI 2024 vs 2025"                   : "roi_compare",
-        "✈️ Top 15 Most Visited Cities"         : "travel_cities",
-        "✈️ Travel Trips by Year"               : "travel_year",
-        "✈️ Travel by Division"                 : "div_activity",
-        "✈️ Travel Seasonality (Monthly)"       : "travel_month",
-        "🏨 Top Hotels by Bookings"             : "hotel_cost",
-        "📦 ZSDCY Category Revenue (Pie)"       : "zsdcy_cat",
-        "📦 ZSDCY Revenue by Year"              : "zsdcy_year",
-        "🗺️ Top 15 Cities by Revenue"          : "city_rev",
-        "🌿 Nutraceutical vs Pharma Growth"     : "nutra_growth",
-        "🏢 Top Distributors by Revenue"        : "top_sdp",
-        "🤖 Units Forecast (6 Months)"          : "ml_units",
-        "🤖 Revenue Forecast (6 Months)"        : "ml_revenue",
-        "📊 ML ROI Products Verified"           : "ml_roi",
-        "🚨 Discount Abuse by Team"             : "disc_abuse",
-        "⚡ Quick Wins Action Table"            : "quick_wins",
-        "🚨 Lost Distributors Table"            : "lost_dist",
+        # ── KPI TILES ──
+        "📊 KPI — Revenue 2024 vs 2025 vs 2026"    : "kpi_revenue",
+        "📊 KPI — Units 2024 vs 2025"              : "kpi_units",
+        "📊 KPI — Promo Spend & ROI"               : "kpi_promo",
+        "📊 KPI — Field Trips & Activity"          : "kpi_travel",
+        "📊 KPI — Distribution (ZSDCY)"            : "kpi_zsdcy",
+        "📊 KPI — Discount & Alerts"               : "kpi_alerts",
+        # ── SALES CHARTS ──
+        "📈 Revenue Trend (Monthly)"               : "rev_trend",
+        "📊 Revenue by Year"                       : "rev_year",
+        "🏆 Top 10 Products by Revenue"            : "top_products",
+        "⚠️ Bottom 10 Products by Revenue"         : "bot_products",
+        "👥 Top 10 Teams by Revenue"               : "top_teams",
+        "⚠️ Bottom 10 Teams by Revenue"            : "bot_teams",
+        "🚀 Fastest Growing Products (+%)"         : "fast_grow",
+        "📉 Slowest Growing Products (-%)"         : "slow_grow",
+        "📅 Sales Seasonality Heatmap"             : "seasonality",
+        "📦 Units Sold by Year"                    : "units_year",
+        "🧾 Invoice Count by Year"                 : "invoice_year",
+        "💸 Discount Rate by Team"                 : "disc_team",
+        "📈 Revenue 2024 vs 2025 Compare"          : "rev_compare",
+        # ── PROMO CHARTS ──
+        "💰 Promo Spend by Year"                   : "promo_year",
+        "💰 Promo Spend by Team"                   : "promo_team",
+        "💰 Promo Spend by Product"                : "promo_prod",
+        "💰 Promo Spend by Activity Type"          : "promo_type",
+        "⏰ Promo Timing vs Sales Rank"            : "promo_timing",
+        "💹 Promo vs Revenue Monthly"              : "promo_rev",
+        # ── ROI CHARTS ──
+        "📊 ROI by Product (Top 15)"               : "roi_products",
+        "📊 ROI by Team"                           : "roi_team",
+        "📊 ROI 2024 vs 2025"                      : "roi_compare",
+        # ── TRAVEL CHARTS ──
+        "✈️ Top 15 Most Visited Cities"            : "travel_cities",
+        "✈️ Travel Trips by Year"                  : "travel_year",
+        "✈️ Travel by Division"                    : "div_activity",
+        "✈️ Travel Seasonality (Monthly)"          : "travel_month",
+        "🏨 Top Hotels by Bookings"                : "hotel_cost",
+        # ── DISTRIBUTION CHARTS ──
+        "📦 ZSDCY Category Revenue (Pie)"          : "zsdcy_cat",
+        "📦 ZSDCY Revenue by Year"                 : "zsdcy_year",
+        "🗺️ Top 15 Cities by Revenue"             : "city_rev",
+        "🌿 Nutraceutical vs Pharma Growth"        : "nutra_growth",
+        "🏢 Top Distributors by Revenue"           : "top_sdp",
+        # ── ML / ALERTS ──
+        "🤖 DSR Revenue Forecast (6 Months)"       : "ml_revenue",
+        "🤖 DSR Units Forecast (6 Months)"         : "ml_units",
+        "🤖 ML ROI Products Verified"              : "ml_roi",
+        "🚨 Discount Abuse by Team"                : "disc_abuse",
+        "⚡ Quick Wins Action Table"               : "quick_wins",
+        "🚨 Lost Distributors Table"               : "lost_dist",
     }
 
-    st.markdown("### ➕ Select Charts for Your Personal View")
-    st.markdown(note("38 charts available from all 4 databases. Select any combination and save. KPI tiles above always stay visible."), unsafe_allow_html=True)
+    st.markdown("### ➕ Select KPIs and Charts for Your Personal View")
+    st.markdown(note("44 options available — KPI tiles and charts from all 4 databases. Select any combination and save."), unsafe_allow_html=True)
 
     if "personal_charts" not in st.session_state:
         st.session_state.personal_charts = []
@@ -2444,7 +2577,7 @@ elif page == "📌 Personal Dashboard":
     col1, col2 = st.columns([3,1])
     with col1:
         selected_charts = st.multiselect(
-            "Choose charts to display:",
+            "Choose KPIs and charts to display:",
             options=list(all_charts.keys()),
             default=st.session_state.personal_charts if st.session_state.personal_charts else []
         )
@@ -2452,16 +2585,19 @@ elif page == "📌 Personal Dashboard":
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("💾 Save Dashboard", type="primary", use_container_width=True):
             st.session_state.personal_charts = selected_charts
-            st.success(f"✅ {len(selected_charts)} charts saved!")
+            st.success(f"✅ {len(selected_charts)} items saved!")
         if st.button("🗑️ Clear All", use_container_width=True):
             st.session_state.personal_charts = []
             st.rerun()
 
     active = st.session_state.personal_charts if st.session_state.personal_charts else selected_charts
 
-    if active:
+    if not active:
+        st.info("👆 Select KPIs and charts above and click 'Save Dashboard' to build your personal view.")
+    else:
         st.markdown("---")
-        st.markdown(f"### 📊 Your Selected Charts ({len(active)})")
+        st.markdown(f"### 📊 Your Personal Dashboard ({len(active)} items)")
+
         for i in range(0, len(active), 2):
             cols = st.columns(2)
             for j, col in enumerate(cols):
@@ -2471,7 +2607,53 @@ elif page == "📌 Personal Dashboard":
                     with col:
                         st.markdown(f"**{chart_name}**")
                         try:
-                            if chart_key == "rev_trend":
+                            # ── KPI TILES ───────────────────────
+                            if chart_key == "kpi_revenue":
+                                r24 = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+                                r25 = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+                                r26 = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
+                                c1,c2,c3 = st.columns(3)
+                                c1.markdown(kpi("Revenue 2024",fmt(r24),"Full year"), unsafe_allow_html=True)
+                                c2.markdown(kpi("Revenue 2025",fmt(r25),f"+{(r25-r24)/r24*100:.1f}% YoY"), unsafe_allow_html=True)
+                                c3.markdown(kpi("Revenue 2026 YTD",fmt(r26),"Jan–Apr 2026"), unsafe_allow_html=True)
+                            elif chart_key == "kpi_units":
+                                u24 = df_sales[df_sales["Yr"]==2024]["TotalUnits"].sum()
+                                u25 = df_sales[df_sales["Yr"]==2025]["TotalUnits"].sum()
+                                c1,c2,c3 = st.columns(3)
+                                c1.markdown(kpi("Units 2024",fmt_num(u24),"66.5M units"), unsafe_allow_html=True)
+                                c2.markdown(kpi("Units 2025",fmt_num(u25),"+10.3% vs 2024"), unsafe_allow_html=True)
+                                c3.markdown(kpi("Avg Price/Unit","PKR 321","Verified 2025"), unsafe_allow_html=True)
+                            elif chart_key == "kpi_promo":
+                                s24 = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
+                                s25 = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
+                                r24 = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+                                r25 = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+                                c1,c2,c3 = st.columns(3)
+                                c1.markdown(kpi("Promo 2025",fmt(s25),"+38.2% vs 2024"), unsafe_allow_html=True)
+                                c2.markdown(kpi("ROI 2024",f"{r24/s24:.1f}x","Baseline"), unsafe_allow_html=True)
+                                c3.markdown(kpi("ROI 2025",f"{r25/s25:.1f}x","⚠️ Declining",red=True), unsafe_allow_html=True)
+                            elif chart_key == "kpi_travel":
+                                t24 = df_travel[df_travel["Yr"]==2024]["TravelCount"].sum()
+                                t25 = df_travel[df_travel["Yr"]==2025]["TravelCount"].sum()
+                                c1,c2,c3 = st.columns(3)
+                                c1.markdown(kpi("Trips 2024",fmt_num(t24),"1,985 trips"), unsafe_allow_html=True)
+                                c2.markdown(kpi("Trips 2025",fmt_num(t25),"2,025 trips"), unsafe_allow_html=True)
+                                c3.markdown(kpi("Top City","Lahore","1,566 trips"), unsafe_allow_html=True)
+                            elif chart_key == "kpi_zsdcy":
+                                z24 = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum() if len(df_zsdcy)>0 else 0
+                                z25 = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum() if len(df_zsdcy)>0 else 0
+                                c1,c2,c3 = st.columns(3)
+                                c1.markdown(kpi("Primary 2024",fmt(z24),"ZSDCY DB"), unsafe_allow_html=True)
+                                c2.markdown(kpi("Primary 2025",fmt(z25),"+28.7% YoY"), unsafe_allow_html=True)
+                                c3.markdown(kpi("Nutra Growth","+35.5%","vs Pharma +28%"), unsafe_allow_html=True)
+                            elif chart_key == "kpi_alerts":
+                                disc = df_sales["TotalDiscount"].sum()
+                                c1,c2,c3 = st.columns(3)
+                                c1.markdown(kpi("Total Discounts",fmt(disc),"⚠️ Fix Falcons",red=True), unsafe_allow_html=True)
+                                c2.markdown(kpi("Lost Distrib.","26","PKR 91.6M gone",red=True), unsafe_allow_html=True)
+                                c3.markdown(kpi("Best ROI","Ramipace 65.9x","Triple budget!"), unsafe_allow_html=True)
+                            # ── SALES CHARTS ────────────────────
+                            elif chart_key == "rev_trend":
                                 monthly = df_sales.groupby("Date")["TotalRevenue"].sum().reset_index()
                                 fig = px.line(monthly, x="Date", y="TotalRevenue", color_discrete_sequence=["#2c5f8a"])
                                 fig.update_traces(mode="lines+markers")
@@ -2559,6 +2741,7 @@ elif page == "📌 Personal Dashboard":
                                 fig = px.bar(ry2, x="ProductName", y="TotalRevenue", color="Yr", barmode="group", color_discrete_map={"2024":"#2c5f8a","2025":"#2e7d32"})
                                 apply_layout(fig, height=320, xaxis=dict(tickangle=-30))
                                 st.plotly_chart(fig, use_container_width=True)
+                            # ── PROMO CHARTS ─────────────────────
                             elif chart_key == "promo_year":
                                 ysp = df_act.groupby("Yr")["TotalAmount"].sum().reset_index()
                                 fig = px.bar(ysp, x="Yr", y="TotalAmount", text=ysp["TotalAmount"].apply(fmt), color_discrete_sequence=["#e65100"])
@@ -2601,6 +2784,7 @@ elif page == "📌 Personal Dashboard":
                                 fig.add_trace(go.Scatter(x=cb["Date"], y=cb["TotalRevenue"]/1e6, name="Revenue", line=dict(color="#2c5f8a",width=2)), secondary_y=True)
                                 apply_layout(fig, height=280)
                                 st.plotly_chart(fig, use_container_width=True)
+                            # ── ROI CHARTS ───────────────────────
                             elif chart_key == "roi_products":
                                 rv = df_sales.groupby("ProductName")["TotalRevenue"].sum()
                                 sp = df_act.groupby("Product")["TotalAmount"].sum()
@@ -2633,6 +2817,7 @@ elif page == "📌 Personal Dashboard":
                                     marker_color=["#2e7d32","#c62828"]))
                                 apply_layout(fig, height=280, yaxis=dict(title="ROI"), showlegend=False)
                                 st.plotly_chart(fig, use_container_width=True)
+                            # ── TRAVEL CHARTS ────────────────────
                             elif chart_key == "travel_cities":
                                 lc = df_travel.groupby("VisitLocation")["TravelCount"].sum().nlargest(15).reset_index()
                                 fig = px.bar(lc, x="TravelCount", y="VisitLocation", orientation="h", text=lc["TravelCount"].apply(fmt_num), color_discrete_sequence=["#2c5f8a"])
@@ -2665,6 +2850,7 @@ elif page == "📌 Personal Dashboard":
                                 fig.update_traces(textposition="outside", textfont_size=9)
                                 apply_layout(fig, height=280, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
+                            # ── DISTRIBUTION CHARTS ──────────────
                             elif chart_key == "zsdcy_cat":
                                 cr = df_zsdcy.groupby("Category")["Revenue"].sum().reset_index()
                                 cr["Name"] = cr["Category"].map({"P":"Pharma","N":"Nutraceutical","M":"Medical Device","H":"Herbal","E":"Export"})
@@ -2702,13 +2888,7 @@ elif page == "📌 Personal Dashboard":
                                 fig.update_traces(textposition="outside", textfont_size=9)
                                 apply_layout(fig, height=320, yaxis=dict(autorange="reversed"))
                                 st.plotly_chart(fig, use_container_width=True)
-                            elif chart_key == "ml_units":
-                                u_m = df_sales[df_sales["Yr"]>=2024].groupby(["Yr","Mo"])["TotalUnits"].sum().reset_index()
-                                u_m["Date"] = pd.to_datetime(u_m["Yr"].astype(int).astype(str)+"-"+u_m["Mo"].astype(int).astype(str)+"-01")
-                                fig = px.line(u_m, x="Date", y="TotalUnits", color_discrete_sequence=["#2e7d32"])
-                                fig.update_traces(mode="lines+markers")
-                                apply_layout(fig, height=280, yaxis=dict(title="Units Sold"))
-                                st.plotly_chart(fig, use_container_width=True)
+                            # ── ML / ALERTS ──────────────────────
                             elif chart_key == "ml_revenue":
                                 try:
                                     fc = pd.read_csv("ml_forecast_revenue.csv")
@@ -2718,6 +2898,13 @@ elif page == "📌 Personal Dashboard":
                                     apply_layout(fig, height=280, yaxis=dict(title="Forecast Revenue (PKR)"))
                                     st.plotly_chart(fig, use_container_width=True)
                                 except: st.info("ML forecast file not found")
+                            elif chart_key == "ml_units":
+                                u_m = df_sales[df_sales["Yr"]>=2024].groupby(["Yr","Mo"])["TotalUnits"].sum().reset_index()
+                                u_m["Date"] = pd.to_datetime(u_m["Yr"].astype(int).astype(str)+"-"+u_m["Mo"].astype(int).astype(str)+"-01")
+                                fig = px.line(u_m, x="Date", y="TotalUnits", color_discrete_sequence=["#2e7d32"])
+                                fig.update_traces(mode="lines+markers")
+                                apply_layout(fig, height=280, yaxis=dict(title="Units Sold"))
+                                st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "ml_roi":
                                 try:
                                     hr = pd.read_csv("ml_roi_products.csv").head(12)
@@ -2751,7 +2938,7 @@ elif page == "📌 Personal Dashboard":
                                     st.dataframe(ld_df, use_container_width=True, hide_index=True)
                                 except: st.info("ZSDCY data not available")
                         except Exception as e:
-                            st.error(f"Chart error: {e}")
+                            st.error(f"Error: {e}")
 # PAGE 14: MANAGEMENT VIEW
 # ════════════════════════════════════════════════════════════
 elif page == "👔 Management View":
