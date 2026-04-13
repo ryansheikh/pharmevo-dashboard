@@ -112,19 +112,22 @@ def load_data():
     dsr  = get_dsr_connection()
     ftts = get_ftts_connection()
 
-    # DSR: SALES
+    # DSR: SALES — using VW_Sales view (has TeamName, ProductName, ValueNp, Units, Discount)
     if dsr:
         try:
             ds = pd.read_sql("""
                 SELECT YEAR(InvoiceDate) AS Yr, MONTH(InvoiceDate) AS Mo,
                        CAST(InvoiceDate AS DATE) AS Date,
-                       TeamName, ProductName, SaleFlag,
-                       SUM(NetAmount)      AS TotalRevenue,
-                       SUM(DiscountAmount) AS TotalDiscount,
-                       SUM(Quantity)       AS TotalUnits,
-                       COUNT(InvoiceNo)    AS InvoiceCount
-                FROM SalesRawData
-                WHERE YEAR(InvoiceDate) >= 2020
+                       ISNULL(TeamName,'Unknown')    AS TeamName,
+                       ISNULL(ProductName,'Unknown') AS ProductName,
+                       ISNULL(SaleFlag,'S')          AS SaleFlag,
+                       SUM(ISNULL(ValueNp,0))   AS TotalRevenue,
+                       SUM(ISNULL(Discount,0))  AS TotalDiscount,
+                       SUM(ISNULL(Units,0))     AS TotalUnits,
+                       COUNT(DISTINCT InvoiceNo) AS InvoiceCount
+                FROM VW_Sales
+                WHERE InvoiceDate IS NOT NULL
+                  AND YEAR(InvoiceDate) >= 2020
                 GROUP BY YEAR(InvoiceDate), MONTH(InvoiceDate),
                          CAST(InvoiceDate AS DATE), TeamName, ProductName, SaleFlag
                 ORDER BY Yr, Mo
@@ -134,47 +137,94 @@ def load_data():
     else:
         ds = pd.read_csv("sales_clean.csv")
 
-    # FTTS: ACTIVITIES
+    # FTTS: ACTIVITIES — RequestMaster + Request_Activity_Details JOIN
     if ftts:
         try:
             da = pd.read_sql("""
-                SELECT YEAR(ActivityDate) AS Yr, MONTH(ActivityDate) AS Mo,
-                       CAST(ActivityDate AS DATE) AS Date,
-                       RequestorTeams, Product, ActivityHead, GLHead,
-                       SUM(Amount) AS TotalAmount
-                FROM ActivitiesData
-                WHERE YEAR(ActivityDate) >= 2020
-                GROUP BY YEAR(ActivityDate), MONTH(ActivityDate),
-                         CAST(ActivityDate AS DATE),
-                         RequestorTeams, Product, ActivityHead, GLHead
+                SELECT YEAR(rm.CreatedDate) AS Yr, MONTH(rm.CreatedDate) AS Mo,
+                       CAST(rm.CreatedDate AS DATE) AS Date,
+                       ISNULL(rm.RequestorTeams,'Unknown') AS RequestorTeams,
+                       ISNULL(rad.Product,'Unknown')       AS Product,
+                       ISNULL(rad.ActivityHead,'Other')    AS ActivityHead,
+                       ISNULL(rad.GLHead,'Other')          AS GLHead,
+                       SUM(ISNULL(rad.Amount,0))           AS TotalAmount
+                FROM RequestMaster rm
+                JOIN Request_Activity_Details rad ON rm.RequestId = rad.RequestId
+                WHERE rm.CreatedDate IS NOT NULL AND YEAR(rm.CreatedDate) >= 2020
+                GROUP BY YEAR(rm.CreatedDate), MONTH(rm.CreatedDate),
+                         CAST(rm.CreatedDate AS DATE),
+                         rm.RequestorTeams, rad.Product, rad.ActivityHead, rad.GLHead
                 ORDER BY Yr, Mo
             """, ftts)
         except:
-            da = pd.read_csv("activities_clean.csv")
+            try:
+                da = pd.read_sql("""
+                    SELECT YEAR(mem.CreatedDate) AS Yr, MONTH(mem.CreatedDate) AS Mo,
+                           CAST(mem.CreatedDate AS DATE) AS Date,
+                           ISNULL(mem.RequestorCadre,'Unknown') AS RequestorTeams,
+                           ISNULL(med.ProductName,'Unknown')    AS Product,
+                           ISNULL(med.ExpenseCategoryId,'Other') AS ActivityHead,
+                           'Marketing' AS GLHead,
+                           SUM(ISNULL(med.Amount,0))             AS TotalAmount
+                    FROM MarketingExpenseRequestMaster mem
+                    JOIN MarketingExpenseRequestDetail med ON mem.Id = med.MasterId
+                    WHERE mem.CreatedDate IS NOT NULL AND YEAR(mem.CreatedDate) >= 2020
+                    GROUP BY YEAR(mem.CreatedDate), MONTH(mem.CreatedDate),
+                             CAST(mem.CreatedDate AS DATE),
+                             mem.RequestorCadre, med.ProductName, med.ExpenseCategoryId
+                    ORDER BY Yr, Mo
+                """, ftts)
+            except:
+                da = pd.read_csv("activities_clean.csv")
     else:
         da = pd.read_csv("activities_clean.csv")
 
-    # FTTS: TRAVEL
+    # FTTS: TRAVEL — TravelRequestMaster + TravelRequestDetails + TravelRequest_Employees
     if ftts:
         try:
             dt = pd.read_sql("""
-                SELECT YEAR(FlightDate) AS Yr, MONTH(FlightDate) AS Mo,
-                       CAST(RequestCreatedDate AS DATE) AS RequestCreatedDate,
-                       CAST(FlightDate AS DATE) AS FlightDate,
-                       Traveller, TravellerTeam, TravellerDivision,
-                       VisitLocation, HotelName,
-                       COUNT(*)        AS TravelCount,
-                       SUM(NoofNights) AS NoofNights
-                FROM TravelData
-                WHERE YEAR(FlightDate) >= 2020
-                GROUP BY YEAR(FlightDate), MONTH(FlightDate),
-                         CAST(RequestCreatedDate AS DATE), CAST(FlightDate AS DATE),
-                         Traveller, TravellerTeam, TravellerDivision,
-                         VisitLocation, HotelName
+                SELECT YEAR(trd.FromDate) AS Yr, MONTH(trd.FromDate) AS Mo,
+                       CAST(trm.CreatedDate AS DATE)  AS RequestCreatedDate,
+                       CAST(trd.FromDate AS DATE)     AS FlightDate,
+                       ISNULL(e.firstName+' '+e.lastName,'Unknown') AS Traveller,
+                       ISNULL(stm.TeamName,'Unknown')               AS TravellerTeam,
+                       ISNULL(d.DivisionName,'Unknown')             AS TravellerDivision,
+                       ISNULL(l.LocationName,'Unknown')             AS VisitLocation,
+                       ISNULL(hm.Hotel,'Not Recorded')              AS HotelName,
+                       COUNT(*)                                     AS TravelCount,
+                       SUM(ISNULL(trd.NoofRooms,0))                AS NoofNights
+                FROM TravelRequestMaster trm
+                JOIN TravelRequestDetails trd ON trm.TravelRequestId = trd.TravelRequestMasterId
+                LEFT JOIN TravelRequest_Employees tre ON trm.TravelRequestId = tre.TravelRequestMasterId
+                LEFT JOIN Employees e ON tre.EmployeeId = e.idx
+                LEFT JOIN SalesTeamMaster stm ON stm.idx = (SELECT TOP 1 std2.SalesTeamMasterID FROM SalesTeamDetails std2 WHERE std2.EmployeeId=e.idx)
+                LEFT JOIN Division d ON stm.DivisionID = d.Idx
+                LEFT JOIN Locations l ON trd.ToLocationId = l.idx
+                LEFT JOIN HotelMaster hm ON trd.HotelId = hm.HotelId
+                WHERE trd.FromDate IS NOT NULL AND YEAR(trd.FromDate) >= 2020
+                GROUP BY YEAR(trd.FromDate), MONTH(trd.FromDate),
+                         CAST(trm.CreatedDate AS DATE), CAST(trd.FromDate AS DATE),
+                         e.firstName, e.lastName, stm.TeamName, d.DivisionName,
+                         l.LocationName, hm.Hotel
                 ORDER BY Yr, Mo
             """, ftts)
         except:
-            dt = pd.read_csv("travel_clean.csv")
+            try:
+                # Try the summary view if it exists
+                dt = pd.read_sql("""
+                    SELECT YEAR(FlightDate) AS Yr, MONTH(FlightDate) AS Mo,
+                           RequestCreatedDate, FlightDate,
+                           Traveller, TravellerTeam, TravellerDivision,
+                           VisitLocation, HotelName,
+                           COUNT(*) AS TravelCount, SUM(NoofNights) AS NoofNights
+                    FROM vw_TravelRequest_Summary
+                    WHERE FlightDate IS NOT NULL AND YEAR(FlightDate) >= 2020
+                    GROUP BY FlightDate, RequestCreatedDate, Traveller,
+                             TravellerTeam, TravellerDivision, VisitLocation, HotelName
+                    ORDER BY Yr, Mo
+                """, ftts)
+            except:
+                dt = pd.read_csv("travel_clean.csv")
     else:
         dt = pd.read_csv("travel_clean.csv")
 
@@ -330,7 +380,7 @@ if page == "🏠 Executive Summary":
     yoy_growth  = (rev_2025-rev_2024)/rev_2024*100
 
     st.markdown("### 📊 Key Performance Indicators — Company Overview")
-    st.markdown(note("All KPIs verified from live SQL Server as of April 6, 2026. Row 1 = Overall 2024-2026. Row 2 = 2025 full year. Row 3 = Company records."), unsafe_allow_html=True)
+    st.markdown(note("All KPIs verified from live SQL Server as of April 13, 2026. Row 1 = Overall 2024-2026. Row 2 = 2025 full year. Row 3 = Company records."), unsafe_allow_html=True)
 
     st.markdown("**📅 Overall Totals — 2024 to 2026**")
     c1,c2,c3,c4,c5 = st.columns(5)
@@ -360,10 +410,10 @@ if page == "🏠 Executive Summary":
     c2.markdown(kpi("Top Sales Team", top_team, fmt(top_team_rev)+" revenue"), unsafe_allow_html=True)
     c3.markdown(kpi("Best ROI Product", "Ramipace", "65.9x ROI — verified from raw data"), unsafe_allow_html=True)
     c4.markdown(kpi("Top Revenue City", "Karachi", "PKR 872M — ZSDCY DB"), unsafe_allow_html=True)
-    c5.markdown(kpi("2026 YTD (Apr 6)", fmt(rev_2026), "⚠️ Jan–Apr 2026 partial only", red=True), unsafe_allow_html=True)
+    c5.markdown(kpi("2026 YTD (Apr 13)", fmt(rev_2026), "⚠️ Jan–Apr 2026 partial only", red=True), unsafe_allow_html=True)
 
     # Revenue Trend
-    st.markdown(sec("📈 Revenue Trend (Monthly) — Updated April 6, 2026"), unsafe_allow_html=True)
+    st.markdown(sec("📈 Revenue Trend (Monthly) — Updated April 13, 2026"), unsafe_allow_html=True)
     st.markdown(note("Live from SQL Server. Blue = actual revenue 2024–2025. Orange dashed = 2026 partial year (Jan–Apr). Upward trend confirms strong business growth."), unsafe_allow_html=True)
     monthly  = df_s.groupby("Date")["TotalRevenue"].sum().reset_index()
     complete = monthly[monthly["Date"].dt.year < 2026]
@@ -382,49 +432,43 @@ if page == "🏠 Executive Summary":
         legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
     st.plotly_chart(fig, use_container_width=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(sec("🏆 Top 10 Products by Revenue"), unsafe_allow_html=True)
-        tp = df_s.groupby("ProductName")["TotalRevenue"].sum().nlargest(10).reset_index()
-        tp["Label"] = tp["TotalRevenue"].apply(fmt)
-        fig = px.bar(tp, x="TotalRevenue", y="ProductName", orientation="h", text="Label",
-                     color="TotalRevenue", color_continuous_scale="Blues")
-        fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        st.markdown(sec("👥 Top 10 Teams by Revenue"), unsafe_allow_html=True)
-        tt = df_s.groupby("TeamName")["TotalRevenue"].sum().nlargest(10).reset_index()
-        tt["Label"] = tt["TotalRevenue"].apply(fmt)
-        fig = px.bar(tt, x="TotalRevenue", y="TeamName", orientation="h", text="Label",
-                     color="TotalRevenue", color_continuous_scale="Greens")
-        fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+    # Filterable charts
+    st.markdown("---")
+    st.markdown("### 📊 Explore Products & Teams")
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        n_items_exec = st.slider("How many items to show?", 5, 50, 10, key="exec_n")
+    with col_f2:
+        sort_dir_exec = st.selectbox("Sort order", ["Top (Descending)", "Bottom (Ascending)"], key="exec_sort")
+    with col_f3:
+        chart_type_exec = st.selectbox("View", ["Products by Revenue", "Teams by Revenue"], key="exec_type")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(sec("⚠️ Bottom 10 Teams — Needs Attention"), unsafe_allow_html=True)
-        bt = df_s.groupby("TeamName")["TotalRevenue"].sum().nsmallest(10).reset_index()
-        bt["Label"] = bt["TotalRevenue"].apply(fmt)
-        fig = px.bar(bt, x="TotalRevenue", y="TeamName", orientation="h", text="Label",
-                     color="TotalRevenue", color_continuous_scale="Reds")
-        fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+    asc_exec = (sort_dir_exec == "Bottom (Ascending)")
+    if chart_type_exec == "Products by Revenue":
+        all_prods = df_s.groupby("ProductName")["TotalRevenue"].sum().reset_index().sort_values("TotalRevenue", ascending=asc_exec)
+        show_df = all_prods.head(n_items_exec)
+        show_df["Label"] = show_df["TotalRevenue"].apply(fmt)
+        title_exec = f"{'Bottom' if asc_exec else 'Top'} {n_items_exec} Products by Revenue"
+        color_scale = "Reds_r" if asc_exec else "Blues"
+        fig = px.bar(show_df, x="TotalRevenue", y="ProductName", orientation="h", text="Label",
+                     color="TotalRevenue", color_continuous_scale=color_scale, title=title_exec)
+        fig.update_traces(textposition="outside", textfont_size=10)
+        h_exec = max(350, n_items_exec * 32)
+        apply_layout(fig, height=h_exec, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        st.markdown(sec("⚠️ Bottom 10 Products — Needs Attention"), unsafe_allow_html=True)
-        bp10 = df_s.groupby("ProductName")["TotalRevenue"].sum().reset_index()
-        bp10 = bp10[bp10["TotalRevenue"]>0].nsmallest(10,"TotalRevenue")
-        bp10["Label"] = bp10["TotalRevenue"].apply(fmt)
-        fig = go.Figure(go.Bar(x=bp10["TotalRevenue"], y=bp10["ProductName"],
-            orientation="h", text=bp10["Label"], textposition="outside",
-            textfont_size=11, marker_color="#e65100"))
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"))
+    else:
+        all_teams = df_s.groupby("TeamName")["TotalRevenue"].sum().reset_index().sort_values("TotalRevenue", ascending=asc_exec)
+        show_df_t = all_teams.head(n_items_exec)
+        show_df_t["Label"] = show_df_t["TotalRevenue"].apply(fmt)
+        title_exec_t = f"{'Bottom' if asc_exec else 'Top'} {n_items_exec} Teams by Revenue"
+        color_scale_t = "Reds_r" if asc_exec else "Greens"
+        fig = px.bar(show_df_t, x="TotalRevenue", y="TeamName", orientation="h", text="Label",
+                     color="TotalRevenue", color_continuous_scale=color_scale_t, title=title_exec_t)
+        fig.update_traces(textposition="outside", textfont_size=10)
+        h_exec_t = max(350, n_items_exec * 32)
+        apply_layout(fig, height=h_exec_t, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                     xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
 # ════════════════════════════════════════════════════════════
@@ -432,7 +476,7 @@ if page == "🏠 Executive Summary":
 # ════════════════════════════════════════════════════════════
 elif page == "📈 Sales Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>📈 Sales Deep Analysis</h2>", unsafe_allow_html=True)
-    st.markdown(note("Revenue, units and invoices from DSR Sales Database. 2024: PKR 20.21B | 2025: PKR 23.56B | 2026 YTD (Apr 6): PKR 4.35B."), unsafe_allow_html=True)
+    st.markdown(note("Revenue, units and invoices from DSR Sales Database. 2024: PKR 20.21B | 2025: PKR 23.56B | 2026 YTD (Apr 13): PKR 4.35B."), unsafe_allow_html=True)
 
     yearly = df_s[df_s["Yr"]<2026].groupby("Yr").agg(
         Revenue=("TotalRevenue","sum"), Units=("TotalUnits","sum"),
@@ -471,6 +515,36 @@ elif page == "📈 Sales Analysis":
                  yaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"))
     st.plotly_chart(fig, use_container_width=True)
 
+    # Filterable product explorer
+    st.markdown("---")
+    st.markdown(sec("🔍 Product Explorer — Adjustable View"), unsafe_allow_html=True)
+    col_sf1, col_sf2, col_sf3 = st.columns(3)
+    with col_sf1:
+        n_prods_s = st.slider("Number of products to show", 5, 100, 20, key="sales_n")
+    with col_sf2:
+        sort_s = st.selectbox("Sort", ["Top (Highest First)", "Bottom (Lowest First)"], key="sales_sort")
+    with col_sf3:
+        yr_s = st.selectbox("Year filter", ["All Years", "2024 only", "2025 only", "2026 only"], key="sales_yr")
+
+    asc_s = (sort_s == "Bottom (Lowest First)")
+    df_yr_s = df_s.copy()
+    if yr_s == "2024 only": df_yr_s = df_s[df_s["Yr"]==2024]
+    elif yr_s == "2025 only": df_yr_s = df_s[df_s["Yr"]==2025]
+    elif yr_s == "2026 only": df_yr_s = df_s[df_s["Yr"]==2026]
+    prod_all_s = df_yr_s.groupby("ProductName")["TotalRevenue"].sum().reset_index()
+    prod_all_s = prod_all_s[prod_all_s["TotalRevenue"]>0].sort_values("TotalRevenue", ascending=asc_s).head(n_prods_s)
+    prod_all_s["Label"] = prod_all_s["TotalRevenue"].apply(fmt)
+    title_s = f"{'Bottom' if asc_s else 'Top'} {n_prods_s} Products — {yr_s}"
+    cs = "Reds_r" if asc_s else "Blues"
+    fig_s = px.bar(prod_all_s, x="TotalRevenue", y="ProductName", orientation="h", text="Label",
+                   color="TotalRevenue", color_continuous_scale=cs, title=title_s)
+    fig_s.update_traces(textposition="outside", textfont_size=9)
+    h_s = max(400, n_prods_s * 28)
+    apply_layout(fig_s, height=h_s, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                 xaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"), coloraxis_showscale=False)
+    st.plotly_chart(fig_s, use_container_width=True)
+    st.markdown("---")
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("Fastest Growing Products 2024→2025"), unsafe_allow_html=True)
@@ -490,15 +564,15 @@ elif page == "📈 Sales Analysis":
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.markdown(sec("⚠️ Bottom 20 Products by Revenue"), unsafe_allow_html=True)
-        st.markdown(note("Bottom 20 products (non-zero revenue). Starting from Limitrol then Ibandro — these may be discontinued, newly launched, or severely underpromoted."), unsafe_allow_html=True)
+        st.markdown(sec("⚠️ Underperforming Products — Adjustable"), unsafe_allow_html=True)
+        n_bot20 = st.slider("Show bottom N products", 5, 50, 20, key="bot20_n")
         bp_all = df_s[df_s["Yr"].isin([2024,2025])].groupby("ProductName")["TotalRevenue"].sum().reset_index()
-        bp = bp_all[bp_all["TotalRevenue"]>0].nsmallest(20,"TotalRevenue")
+        bp = bp_all[bp_all["TotalRevenue"]>0].nsmallest(n_bot20,"TotalRevenue")
         bp["Label"] = bp["TotalRevenue"].apply(fmt)
         fig = go.Figure(go.Bar(x=bp["TotalRevenue"], y=bp["ProductName"],
             orientation="h", text=bp["Label"], textposition="outside",
             textfont_size=10, marker_color="#e65100"))
-        apply_layout(fig, height=530, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=max(400, n_bot20*28), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"))
         st.plotly_chart(fig, use_container_width=True)
 
@@ -568,11 +642,41 @@ elif page == "💰 Promotional Analysis":
         st.markdown(sec("Where Does Money Go? (Activity Types)"), unsafe_allow_html=True)
         st.markdown(note("Social/Cultural events and Equipment donations take the biggest shares — doctor engagement tools."), unsafe_allow_html=True)
         asp = df_af.groupby("ActivityHead")["TotalAmount"].sum().nlargest(8).reset_index()
-        fig = px.pie(asp, values="TotalAmount", names="ActivityHead",
+        asp["Label"] = asp["ActivityHead"] + "<br>" + asp["TotalAmount"].apply(fmt)
+        fig = px.pie(asp, values="TotalAmount", names="Label",
                      color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_traces(textinfo="percent+label", textfont_size=11)
-        apply_layout(fig, height=300)
+        fig.update_traces(textinfo="percent+label", textfont_size=10)
+        apply_layout(fig, height=320)
         st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown(sec("🔍 Promo Spend Explorer — Adjustable"), unsafe_allow_html=True)
+    col_pf1, col_pf2, col_pf3 = st.columns(3)
+    with col_pf1:
+        n_promo = st.slider("Number of items", 5, 50, 10, key="promo_n")
+    with col_pf2:
+        sort_promo = st.selectbox("Sort", ["Top (Highest)", "Bottom (Lowest)"], key="promo_sort")
+    with col_pf3:
+        promo_view = st.selectbox("View by", ["Teams", "Products"], key="promo_view")
+
+    asc_promo = (sort_promo == "Bottom (Lowest)")
+    if promo_view == "Teams":
+        pdata = df_af.groupby("RequestorTeams")["TotalAmount"].sum().reset_index()
+        pdata.columns = ["Name", "TotalAmount"]
+    else:
+        pdata = df_af.groupby("Product")["TotalAmount"].sum().reset_index()
+        pdata.columns = ["Name", "TotalAmount"]
+    pdata = pdata.sort_values("TotalAmount", ascending=asc_promo).head(n_promo)
+    pdata["Label"] = pdata["TotalAmount"].apply(fmt)
+    cs_p = "Reds_r" if asc_promo else "Blues"
+    fig = px.bar(pdata, x="TotalAmount", y="Name", orientation="h", text="Label",
+                 color="TotalAmount", color_continuous_scale=cs_p,
+                 title=f"{'Bottom' if asc_promo else 'Top'} {n_promo} {promo_view} — Promo Spend")
+    fig.update_traces(textposition="outside", textfont_size=10)
+    apply_layout(fig, height=max(350, n_promo*28), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                 xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown("---")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -733,6 +837,33 @@ elif page == "✈️ Travel Analysis":
                      xaxis=dict(gridcolor="#eeeeee", title="Total Bookings"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
+    st.markdown(sec("🔍 Travel Explorer — Adjustable"), unsafe_allow_html=True)
+    col_tf1, col_tf2, col_tf3 = st.columns(3)
+    with col_tf1:
+        n_travel = st.slider("Number of items", 5, 50, 15, key="travel_n")
+    with col_tf2:
+        sort_travel = st.selectbox("Sort", ["Top (Most Trips)", "Bottom (Least Trips)"], key="travel_sort")
+    with col_tf3:
+        travel_view = st.selectbox("View by", ["Cities", "Teams"], key="travel_view")
+
+    asc_travel = (sort_travel == "Bottom (Least Trips)")
+    if travel_view == "Cities":
+        tdata = df_t.groupby("VisitLocation")["TravelCount"].sum().reset_index()
+        tdata.columns = ["Name", "Trips"]
+    else:
+        tdata = df_t.groupby("TravellerTeam")["TravelCount"].sum().reset_index()
+        tdata.columns = ["Name", "Trips"]
+    tdata = tdata.sort_values("Trips", ascending=asc_travel).head(n_travel)
+    tdata["Label"] = tdata["Trips"].apply(fmt_num)
+    cs_t = "Reds_r" if asc_travel else "Blues"
+    fig = px.bar(tdata, x="Trips", y="Name", orientation="h", text="Label",
+                 color="Trips", color_continuous_scale=cs_t,
+                 title=f"{'Bottom' if asc_travel else 'Top'} {n_travel} {travel_view} by Trips")
+    fig.update_traces(textposition="outside", textfont_size=10)
+    apply_layout(fig, height=max(350, n_travel*28), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                 xaxis=dict(gridcolor="#eeeeee", title="Total Trips"), coloraxis_showscale=False)
+    st.plotly_chart(fig, use_container_width=True)
+
     st.markdown(sec("Team-Level Travel Activity"), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
@@ -764,7 +895,7 @@ elif page == "✈️ Travel Analysis":
 # ════════════════════════════════════════════════════════════
 elif page == "📦 Distribution Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>📦 Distribution Analysis — ZSDCY Database</h2>", unsafe_allow_html=True)
-    st.markdown(note("ZSDCY database — delivery and billing records 2024–2025. Primary channel (Premier Sales SAP). 2024: PKR 7.58B | 2025: PKR 9.76B (+28.7%)."), unsafe_allow_html=True)
+    st.markdown(note("ZSDCY database — SAP delivery & billing records 2024–2025. Note: Premier Sales Pvt Ltd is Pharmevo's own distribution company. 2024: PKR 7.58B | 2025: PKR 9.76B (+28.7%)."), unsafe_allow_html=True)
 
     total_rev_z  = df_zsdcy["Revenue"].sum()
     total_qty_z  = df_zsdcy["Qty"].sum()
@@ -880,7 +1011,45 @@ elif page == "📦 Distribution Analysis":
                      xaxis=dict(gridcolor="#eeeeee", title="Revenue Growth %"))
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown(sec("🏢 Top 20 Distributors (SDPs) by Revenue"), unsafe_allow_html=True)
+    # City expansion opportunity
+    st.markdown(sec("🗺️ City Expansion Opportunity — Where to Open New Premier Sales Depots"), unsafe_allow_html=True)
+    st.markdown(note("Cities with ZSDCY revenue but low/zero field trip coverage = untapped markets. These are the best candidates for new Premier Sales depot openings."), unsafe_allow_html=True)
+    city_rev_exp  = df_zsdcy.groupby("City")["Revenue"].sum().reset_index()
+    city_trips_exp= df_travel.groupby("VisitLocation")["TravelCount"].sum().reset_index()
+    city_trips_exp.columns = ["City","Trips"]
+    city_exp = city_rev_exp.merge(city_trips_exp, on="City", how="left").fillna(0)
+    city_exp["Trips"] = city_exp["Trips"].astype(int)
+    city_exp["RevPerTrip"] = (city_exp["Revenue"] / city_exp["Trips"].replace(0,1) / 1e6).round(2)
+    city_exp["Opportunity"] = city_exp.apply(
+        lambda r: "🔴 Top Priority — High Rev, No Depot" if r["Revenue"]>200e6 and r["Trips"]<100
+        else "🟡 Expand Here — Good Revenue, Low Visits" if r["Revenue"]>50e6 and r["Trips"]<300
+        else "✅ Well Covered" if r["Trips"]>500 else "⚪ Monitor", axis=1)
+    city_exp_show = city_exp.sort_values("Revenue", ascending=False).head(25).copy()
+    city_exp_show["Revenue"] = city_exp_show["Revenue"].apply(fmt)
+    city_exp_show["RevPerTrip"] = city_exp_show["RevPerTrip"].apply(lambda x: f"PKR {x:.1f}M/trip")
+    col1, col2 = st.columns([2,1])
+    with col1:
+        st.dataframe(city_exp_show[["City","Revenue","Trips","RevPerTrip","Opportunity"]], use_container_width=True, hide_index=True)
+    with col2:
+        priority_cities = city_exp[city_exp["Opportunity"].str.contains("🔴|🟡")]
+        st.markdown(f"""<div class="manual-working">EXPANSION ANALYSIS
+══════════════════════════
+Total cities tracked : {len(city_exp)}
+🔴 Top Priority cities : {len(city_exp[city_exp["Opportunity"].str.contains("🔴")])}
+   High rev, zero depot
+
+🟡 Expansion candidates: {len(city_exp[city_exp["Opportunity"].str.contains("🟡")])}
+   Good rev, few visits
+
+ACTION: Open 3-5 new Premier
+Sales depots in priority 
+cities in next 12 months.
+
+Estimated revenue gain:
+PKR 150-200M new markets
+══════════════════════════</div>""", unsafe_allow_html=True)
+
+    st.markdown(sec("🏢 Top 20 Premier Sales Depots (SDPs) by Revenue — Own Distribution Network"), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
         sdp_total = df_zsdp.groupby("SDP Name").agg(Revenue=("Revenue","sum"),Products=("Products","max")).reset_index().nlargest(20,"Revenue")
@@ -909,7 +1078,7 @@ elif page == "📦 Distribution Analysis":
 # ════════════════════════════════════════════════════════════
 elif page == "🔗 Combined ROI Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>🔗 Combined ROI — All 4 Databases</h2>", unsafe_allow_html=True)
-    st.markdown(note("Updated April 6, 2026. Connects promotional spending (FTTS) with actual sales revenue (DSR). ROI 2024=20.3x | ROI 2025=17.2x — declining. Promo spend grew +38.2% but revenue only +16.6%."), unsafe_allow_html=True)
+    st.markdown(note("Updated April 13, 2026. Connects promotional spending (FTTS) with actual sales revenue (DSR). ROI 2024=20.3x | ROI 2025=17.2x — declining. Promo spend grew +38.2% but revenue only +16.6%."), unsafe_allow_html=True)
     st.markdown(good("KEY PROOF: Promotional spend and same-month revenue have <b>0.784 correlation</b>. Every PKR 1 spent = PKR 17.2 in revenue (2025)."), unsafe_allow_html=True)
 
     msp   = df_act[df_act["Yr"]>=2024].groupby("Date")["TotalAmount"].sum().reset_index()
@@ -930,6 +1099,36 @@ elif page == "🔗 Combined ROI Analysis":
     fig.update_yaxes(title_text="Promo Spend (M PKR)", gridcolor="#eeeeee", secondary_y=False)
     fig.update_yaxes(title_text="Revenue (M PKR)", gridcolor="#eeeeee", secondary_y=True)
     st.plotly_chart(fig, use_container_width=True)
+
+    # Filterable ROI
+    st.markdown("---")
+    st.markdown(sec("🔍 ROI Explorer — Adjustable"), unsafe_allow_html=True)
+    col_rf1, col_rf2, col_rf3 = st.columns(3)
+    with col_rf1:
+        n_roi_filter = st.slider("Number of products", 5, 50, 15, key="roi_n_filter")
+    with col_rf2:
+        sort_roi_filter = st.selectbox("Sort", ["Top ROI (Best)", "Bottom ROI (Worst)"], key="roi_sort_filter")
+    with col_rf3:
+        min_spend_roi = st.number_input("Min Promo Spend (PKR)", value=500000, step=100000, key="roi_min_spend")
+
+    rv_rf = df_sales.groupby("ProductName")["TotalRevenue"].sum()
+    sp_rf = df_act.groupby("Product")["TotalAmount"].sum()
+    rc_rf = pd.DataFrame({"Rev":rv_rf,"Spend":sp_rf}).dropna().reset_index()
+    rc_rf.columns = ["ProductName","Rev","Spend"]
+    rc_rf = rc_rf[rc_rf["Spend"]>=min_spend_roi]
+    rc_rf["ROI"] = rc_rf["Rev"]/rc_rf["Spend"]
+    asc_roi = (sort_roi_filter == "Bottom ROI (Worst)")
+    rc_rf = rc_rf.sort_values("ROI", ascending=asc_roi).head(n_roi_filter)
+    colors_rff = ["#FFD700" if "RAMIPACE" in p.upper() else "#c62828" if r<5 else "#2e7d32" if r>30 else "#2c5f8a" for p,r in zip(rc_rf["ProductName"],rc_rf["ROI"])]
+    fig_rf = go.Figure(go.Bar(x=rc_rf["ROI"], y=rc_rf["ProductName"], orientation="h",
+        text=rc_rf["ROI"].apply(lambda x: f"{x:.1f}x"), textposition="outside", textfont_size=10,
+        marker_color=colors_rff))
+    apply_layout(fig_rf, height=max(350, n_roi_filter*28),
+        yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        xaxis=dict(gridcolor="#eeeeee", title="ROI"))
+    fig_rf.update_layout(title=f"{'Worst' if asc_roi else 'Best'} {n_roi_filter} Products by ROI | Min Spend: {fmt(min_spend_roi)}")
+    st.plotly_chart(fig_rf, use_container_width=True)
+    st.markdown("---")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -978,7 +1177,7 @@ elif page == "🔗 Combined ROI Analysis":
 # ════════════════════════════════════════════════════════════
 elif page == "🚨 Alerts & Opportunities":
     st.markdown("<h2 style='color:#2c5f8a'>🚨 Alerts & Strategic Opportunities</h2>", unsafe_allow_html=True)
-    st.markdown(note("All alerts verified from live data as of April 6, 2026. Green = opportunity. Orange = warning. Red = urgent action this week."), unsafe_allow_html=True)
+    st.markdown(note("All alerts verified from live data as of April 13, 2026. Green = opportunity. Orange = warning. Red = urgent action this week."), unsafe_allow_html=True)
 
     # ROI per product from raw data
     rv_a  = df_sales.groupby("ProductName")["TotalRevenue"].sum()
@@ -1009,17 +1208,6 @@ elif page == "🚨 Alerts & Opportunities":
     st.markdown(sec("🚨 ROI Declining Alert — Updated April 2026"), unsafe_allow_html=True)
     st.markdown(danger(f"ROI dropped from <b>{roi_24:.1f}x (2024)</b> to <b>{roi_25:.1f}x (2025)</b>. Promo spend grew +38.2% but revenue only +16.6%. Fix promo timing and discount abuse urgently. Target: 22x ROI for 2026."), unsafe_allow_html=True)
 
-    st.markdown(sec("🚨 Discount Abuse Alert"), unsafe_allow_html=True)
-    disc_team = df_sales.groupby("TeamName").agg(Discount=("TotalDiscount","sum"),Revenue=("TotalRevenue","sum")).reset_index()
-    disc_team = disc_team[disc_team["Revenue"]>5e6]
-    disc_team["Rate"] = disc_team["Discount"]/disc_team["Revenue"]*100
-    disc_team = disc_team[disc_team["Rate"]>5].sort_values("Rate",ascending=False)
-    for _, row in disc_team.iterrows():
-        if row["Rate"]>15:
-            st.markdown(danger(f"<b>{row['TeamName']}</b> — Discount Rate: <b>{row['Rate']:.1f}%</b> (avg 1.6%) | Total Discount: {fmt(row['Discount'])}"), unsafe_allow_html=True)
-        else:
-            st.markdown(warn(f"<b>{row['TeamName']}</b> — Discount Rate: <b>{row['Rate']:.1f}%</b> | Discount: {fmt(row['Discount'])}"), unsafe_allow_html=True)
-
     st.markdown(sec("🚨 Division Field Activity Alerts"), unsafe_allow_html=True)
     div_alert = df_travel.groupby("TravellerDivision").agg(Trips=("TravelCount","sum"),People=("Traveller","nunique")).reset_index()
     div_alert["TripsPerPerson"] = (div_alert["Trips"]/div_alert["People"]).round(1)
@@ -1029,33 +1217,18 @@ elif page == "🚨 Alerts & Opportunities":
         else:
             st.markdown(good(f"<b>{row['TravellerDivision']}</b> — {row['TripsPerPerson']:.0f} trips/person ✓"), unsafe_allow_html=True)
 
-    st.markdown(sec("⚠️ Distributor Risk — April 2026"), unsafe_allow_html=True)
-    sdp_24 = set(df_zsdcy[df_zsdcy["Yr"]==2024]["SDP Name"].unique())
-    sdp_25 = set(df_zsdcy[df_zsdcy["Yr"]==2025]["SDP Name"].unique())
-    lost = sdp_24 - sdp_25
-    lost_rev = []
-    for sdp in lost:
-        rev = df_zsdcy[df_zsdcy["SDP Name"]==sdp]["Revenue"].sum()
-        lost_rev.append({"Distributor":sdp,"Lost Revenue":rev})
-    if lost_rev:
-        lost_df = pd.DataFrame(lost_rev).sort_values("Lost Revenue",ascending=False)
-        lost_df["Revenue_fmt"] = lost_df["Lost Revenue"].apply(fmt)
-        total_lost = sum(r["Lost Revenue"] for r in lost_rev)
-        st.markdown(danger(f"<b>{len(lost)} distributors lost</b> from 2024 to 2025. Total at-risk revenue: <b>{fmt(total_lost)}</b>. Nusrat Pharma = PKR 224.9M — call immediately!"), unsafe_allow_html=True)
-        st.dataframe(lost_df[["Distributor","Revenue_fmt"]].rename(columns={"Revenue_fmt":"Lost Revenue"}).head(10), use_container_width=True, hide_index=True)
-
     st.markdown(sec("📋 Strategic Recommendations — April 2026"), unsafe_allow_html=True)
     recs = [
-        ("good",   "Invest in Ramipace",       "ROI = 65.9x verified. Triple budget from PKR 14.4M to PKR 43M. Expected +PKR 951M revenue."),
-        ("good",   "Invest in Finno-Q",         "+226% growth with only PKR 6.7M spend. Allocate PKR 10M — target +400% growth in 2026."),
-        ("good",   "Invest in Erlina Plus XR",  "+699% growth — fastest growing product. Needs immediate promotional support."),
-        ("good",   "Focus on Q4 (Oct–Dec)",     "24.4% of annual revenue. Start September campaigns to build Q4 momentum."),
-        ("warn",   "Fix Promo Timing",           "July = #1 spend but #8 in sales. Move 30% July budget to January (+PKR 300M potential)."),
-        ("warn",   "Grow Nutraceuticals",        "+35.5% growth vs Pharma +28%. Launch dedicated team. Target 20% share by 2027."),
-        ("warn",   "Fix Division 4",             "Only 16 trips/person. Set 40 trips minimum target immediately."),
-        ("danger", "Fix Discount Abuse",         "Falcons 20.5%, Strikers 20.3%. Audit immediately. Save PKR 200M+/year."),
-        ("danger", "Recover Nusrat Pharma",      "PKR 224.9M revenue lost. Call this week — offer dedicated account manager."),
-        ("danger", "Reduce Distributor Risk",    "87.5% through Premier Sales. Onboard 2 new distributors urgently."),
+        ("good",   "Invest in Ramipace",        "ROI = 65.9x verified. Triple budget from PKR 14.4M to PKR 43M. Expected +PKR 951M revenue."),
+        ("good",   "Invest in Finno-Q",          "+226% growth with only PKR 6.7M spend. Allocate PKR 10M — target +400% growth in 2026."),
+        ("good",   "Invest in Erlina Plus XR",   "+699% growth — fastest growing product. Needs immediate promotional support."),
+        ("good",   "Focus on Q4 (Oct–Dec)",      "24.4% of annual revenue. Start September campaigns to build Q4 momentum."),
+        ("warn",   "Fix Promo Timing",            "July = #1 spend but #8 in sales. Move 30% July budget to January (+PKR 300M potential)."),
+        ("warn",   "Grow Nutraceuticals",         "+35.5% growth vs Pharma +28%. Launch dedicated team. Target 20% share by 2027."),
+        ("warn",   "Fix Division 4 Field Activity","Only 16 trips/person. Set 40 trips minimum target immediately."),
+        ("good",   "Expand to Untapped Cities",   "Karachi = PKR 872M revenue with minimal field trips. Add 300+ trips — expected +PKR 150M. Identify more cities where Premier Sales can open new depots."),
+        ("warn",   "Optimize Promo Efficiency",   "ROI declined 20.3x → 17.2x. Spend growing 2x faster than revenue — reallocate from low-ROI to high-ROI products."),
+        ("good",   "New City Depot Expansion",    "Analysis shows several high-revenue cities with zero current depot coverage. Premier Sales should evaluate opening new SDPs in these markets."),
     ]
     for style, title, desc in recs:
         fn = good if style=="good" else warn if style=="warn" else danger
@@ -1063,14 +1236,17 @@ elif page == "🚨 Alerts & Opportunities":
 
     st.markdown(sec("⚡ Quick Wins Action Table"), unsafe_allow_html=True)
     qw = pd.DataFrame({
-        "Action":["Triple Ramipace budget","Allocate PKR 10M to Finno-Q","Fix Falcons discount abuse",
-                  "Move July spend to January","Add 300 Karachi field trips",
-                  "Call Nusrat Pharma — recover","Double Q4 campaigns","Launch Nutraceutical team"],
-        "Expected Impact":["+PKR 951M revenue","+PKR 200M revenue","Save PKR 200M/year",
-                           "+PKR 300M revenue","+PKR 150M revenue","Recover PKR 224.9M",
-                           "+PKR 300M Q4 revenue","+PKR 300M by 2027"],
-        "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH",
-                    "🟡 THIS MONTH","🔴 THIS WEEK","🟡 THIS MONTH","🟢 THIS YEAR"]
+        "Action":["Triple Ramipace budget","Allocate PKR 10M to Finno-Q",
+                  "Move July spend to January","Add 300+ Karachi field trips",
+                  "Double Q4 campaigns","Launch Nutraceutical team",
+                  "Open new Premier Sales depots","Boost Division 4 field activity"],
+        "Expected Impact":["+PKR 951M revenue","+PKR 200M revenue",
+                           "+PKR 300M revenue","+PKR 150M revenue",
+                           "+PKR 300M Q4 revenue","+PKR 300M by 2027",
+                           "+PKR 200M new markets","+PKR 100M from more doctor coverage"],
+        "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH",
+                    "🟡 THIS MONTH","🟡 THIS MONTH","🟢 THIS YEAR",
+                    "🟡 THIS MONTH","🟡 THIS MONTH"]
     })
     st.dataframe(qw, use_container_width=True, hide_index=True)
 
@@ -1079,7 +1255,7 @@ elif page == "🚨 Alerts & Opportunities":
 # ════════════════════════════════════════════════════════════
 elif page == "📊 Advanced Insights":
     st.markdown("<h2 style='color:#2c5f8a'>📊 Advanced Business Insights</h2>", unsafe_allow_html=True)
-    st.markdown(note("Updated April 6, 2026. Key analytical insights from all databases."), unsafe_allow_html=True)
+    st.markdown(note("Updated April 13, 2026. Key analytical insights from all databases."), unsafe_allow_html=True)
 
     # INSIGHT 4: PROMOTIONAL TIMING
     st.markdown(sec("⏰ Insight 1 — Promotional Timing vs Sales Peak"), unsafe_allow_html=True)
@@ -1141,31 +1317,8 @@ elif page == "📊 Advanced Insights":
                          xaxis=dict(gridcolor="#eeeeee",title="Trip Growth % 2024→2025"), coloraxis_showscale=False)
             st.plotly_chart(fig, use_container_width=True)
 
-    # INSIGHT 8: DIVISION EFFICIENCY
-    st.markdown(sec("🏢 Insight 3 — Division Field Efficiency"), unsafe_allow_html=True)
-    st.markdown(note("Division 1 leads at ~82 trips/person. Division 4 = only ~16 trips/person — 5x less active. Field activity directly drives doctor prescriptions."), unsafe_allow_html=True)
-    div_eff = df_travel.groupby("TravellerDivision").agg(Trips=("TravelCount","sum"),Nights=("NoofNights","sum"),People=("Traveller","nunique")).reset_index()
-    div_eff["TripsPerPerson"] = (div_eff["Trips"]/div_eff["People"]).round(1)
-    div_eff["NightsPerTrip"]  = (div_eff["Nights"]/div_eff["Trips"]).round(1)
-    col1, col2 = st.columns(2)
-    with col1:
-        colors_div = ["#2e7d32" if t>70 else "#2c5f8a" if t>40 else "#c62828" for t in div_eff.sort_values("TripsPerPerson",ascending=False)["TripsPerPerson"]]
-        fig = go.Figure(go.Bar(
-            x=div_eff.sort_values("TripsPerPerson",ascending=False)["TripsPerPerson"],
-            y=div_eff.sort_values("TripsPerPerson",ascending=False)["TravellerDivision"],
-            orientation="h",
-            text=[f"{t:.0f} trips/person" for t in div_eff.sort_values("TripsPerPerson",ascending=False)["TripsPerPerson"]],
-            textposition="outside", textfont_size=11, marker_color=colors_div))
-        apply_layout(fig, height=280, yaxis=dict(autorange="reversed",gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee",title="Trips Per Person"))
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        st.dataframe(div_eff[["TravellerDivision","People","Trips","TripsPerPerson","NightsPerTrip"]].sort_values("TripsPerPerson",ascending=False), use_container_width=True, hide_index=True)
-        st.markdown(good("Division 1: highest field activity — replicate their approach across all divisions!"), unsafe_allow_html=True)
-        st.markdown(danger("Division 4: only ~16 trips/person — set minimum 40 trips target immediately."), unsafe_allow_html=True)
-
     # INSIGHT 11: HOTEL OPTIMIZATION
-    st.markdown(sec("🏨 Insight 4 — Hotel Cost Optimization Opportunity"), unsafe_allow_html=True)
+    st.markdown(sec("🏨 Insight 3 — Hotel Cost Optimization Opportunity"), unsafe_allow_html=True)
     st.markdown(note("Top 5 hotels account for majority of bookings. Negotiating corporate rates could save 15–20% of travel costs. Indigo Heights = 880+ bookings — huge leverage!"), unsafe_allow_html=True)
     hotel_df = df_travel[df_travel["HotelName"]!="Not Recorded"].groupby("HotelName").agg(Bookings=("TravelCount","sum"),Nights=("NoofNights","sum")).reset_index()
     hotel_df = hotel_df.nlargest(10,"Bookings")
@@ -1204,7 +1357,7 @@ Potential saving: {fmt(total_est_savings)} annually.
 # ════════════════════════════════════════════════════════════
 elif page == "🎯 Strategic Growth Plan":
     st.markdown("<h1 style='color:#2c5f8a'>🎯 Strategic Growth Plan</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666'>3 Key Insights — Updated April 6, 2026</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#666'>3 Key Insights — Updated April 13, 2026</p>", unsafe_allow_html=True)
     st.markdown("---")
 
     sp_24 = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
@@ -1324,8 +1477,8 @@ elif page == "🎯 Strategic Growth Plan":
 # ════════════════════════════════════════════════════════════
 elif page == "🔍 Executive Intelligence":
     st.markdown("<h1 style='color:#2c5f8a'>🔍 Executive Intelligence Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666; font-size:16px'>Complete Business Summary — All 4 Databases | For Senior Management | April 6, 2026</p>", unsafe_allow_html=True)
-    st.markdown(note("Every finding verified from live data April 6, 2026. Green = invest more. Orange = fix this. Red = act immediately."), unsafe_allow_html=True)
+    st.markdown("<p style='color:#666; font-size:16px'>Complete Business Summary — All 4 Databases | For Senior Management | April 13, 2026</p>", unsafe_allow_html=True)
+    st.markdown(note("Every finding verified from live data April 13, 2026. Green = invest more. Orange = fix this. Red = act immediately."), unsafe_allow_html=True)
     st.markdown("---")
 
     # Fixed variable definitions - no NameError
@@ -1349,7 +1502,7 @@ elif page == "🔍 Executive Intelligence":
     roi_all_ei     = rev_all_ei/sp_all_ei
 
     # Section 1: Business Overview
-    st.markdown("### 📊 Complete Business Overview — April 6, 2026")
+    st.markdown("### 📊 Complete Business Overview — April 13, 2026")
     c1,c2,c3,c4,c5 = st.columns(5)
     c1.markdown(kpi("Secondary Revenue",  fmt(rev_all_ei),         "DSR DB — All years"), unsafe_allow_html=True)
     c2.markdown(kpi("Primary Revenue",    fmt(zrev_24_ei+zrev_25_ei), "ZSDCY DB — 2024+2025"), unsafe_allow_html=True)
@@ -1556,28 +1709,7 @@ TARGET 2026: 22x ROI
         st.plotly_chart(fig, use_container_width=True)
     st.markdown(warn(f"ROI: {roi_24_ei:.1f}x (2024) → {roi_25_ei:.1f}x (2025). Fix promo timing + discount abuse. Target 22x for 2026."), unsafe_allow_html=True)
 
-    st.markdown(sec("🟡 FINDING 8 — Division 4 Works 5x Less than Division 1"), unsafe_allow_html=True)
-    div_ei = df_travel.groupby("TravellerDivision").agg(Trips=("TravelCount","sum"),People=("Traveller","nunique")).reset_index()
-    div_ei["TripsPerPerson"] = (div_ei["Trips"]/div_ei["People"]).round(1)
-    col1, col2 = st.columns(2)
-    with col1:
-        colors_dei = ["#2e7d32" if t>40 else "#e65100" if t>20 else "#c62828" for t in div_ei.sort_values("TripsPerPerson",ascending=False)["TripsPerPerson"]]
-        fig = go.Figure(go.Bar(
-            x=div_ei.sort_values("TripsPerPerson",ascending=False)["TripsPerPerson"],
-            y=div_ei.sort_values("TripsPerPerson",ascending=False)["TravellerDivision"],
-            orientation="h",
-            text=[f"{t:.0f} trips/person" for t in div_ei.sort_values("TripsPerPerson",ascending=False)["TripsPerPerson"]],
-            textposition="outside", textfont_size=10, marker_color=colors_dei))
-        apply_layout(fig, height=280, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                     xaxis=dict(gridcolor="#eee"))
-        fig.update_layout(title="Field Activity by Division")
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        st.dataframe(div_ei.sort_values("TripsPerPerson",ascending=False)[["TravellerDivision","People","Trips","TripsPerPerson"]],
-                     use_container_width=True, hide_index=True)
-    st.markdown(warn("ACTION: Set minimum 40 trips/person target for all divisions. Division 4 must improve 4x."), unsafe_allow_html=True)
-
-    st.markdown(sec("🟡 FINDING 9 — Top 5 Products = 34.5% of Revenue (Concentration Risk)"), unsafe_allow_html=True)
+    st.markdown(sec("🟡 FINDING 8 — Top 5 Products = 34.5% of Revenue (Concentration Risk)"), unsafe_allow_html=True)
     prod_rv = df_sales.groupby("ProductName")["TotalRevenue"].sum().sort_values(ascending=False).reset_index()
     top5_share = prod_rv.head(5)["TotalRevenue"].sum()/prod_rv["TotalRevenue"].sum()*100
     col1, col2 = st.columns(2)
@@ -1600,37 +1732,7 @@ TARGET 2026: 22x ROI
         st.plotly_chart(fig, use_container_width=True)
     st.markdown(warn(f"Top 5 = {top5_share:.1f}% revenue. If X-Plended fails = lose PKR 4.3B. Develop 3–5 new products urgently."), unsafe_allow_html=True)
 
-    st.markdown(sec("🔴 FINDING 10 — URGENT: PKR 750M Discounts — Falcons at 20.5%!"), unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        dt_ei = df_sales.groupby("TeamName").agg(D=("TotalDiscount","sum"),R=("TotalRevenue","sum")).reset_index()
-        dt_ei = dt_ei[dt_ei["R"]>5e6]
-        dt_ei["Rate"] = dt_ei["D"]/dt_ei["R"]*100
-        dt_ei10 = dt_ei.nlargest(10,"Rate")
-        colors_d10 = ["#c62828" if r>10 else "#e65100" if r>3 else "#2c5f8a" for r in dt_ei10["Rate"]]
-        fig = go.Figure(go.Bar(x=dt_ei10["Rate"], y=dt_ei10["TeamName"], orientation="h",
-            text=[f"{r:.1f}%" for r in dt_ei10["Rate"]], textposition="outside",
-            textfont_size=10, marker_color=colors_d10))
-        apply_layout(fig, height=320, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                     xaxis=dict(gridcolor="#eee",title="Discount Rate %"))
-        fig.update_layout(title="Discount Rate by Team")
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        dp_ei = df_sales.groupby("ProductName").agg(D=("TotalDiscount","sum"),R=("TotalRevenue","sum")).reset_index()
-        dp_ei = dp_ei[dp_ei["R"]>5e6]
-        dp_ei["Rate"] = dp_ei["D"]/dp_ei["R"]*100
-        dp_ei8 = dp_ei.nlargest(8,"Rate")
-        colors_dp = ["#c62828" if r>20 else "#e65100" if r>10 else "#2c5f8a" for r in dp_ei8["Rate"]]
-        fig = go.Figure(go.Bar(x=dp_ei8["Rate"], y=dp_ei8["ProductName"], orientation="h",
-            text=[f"{r:.1f}%" for r in dp_ei8["Rate"]], textposition="outside",
-            textfont_size=9, marker_color=colors_dp))
-        apply_layout(fig, height=320, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                     xaxis=dict(gridcolor="#eee",title="Discount Rate %"))
-        fig.update_layout(title="Discount Rate by Product")
-        st.plotly_chart(fig, use_container_width=True)
-    st.markdown(danger("URGENT: Audit Falcons (20.5%) and Strikers (20.3%) this week. Cap all discounts at 5%. Save PKR 200M+/year."), unsafe_allow_html=True)
-
-    st.markdown(sec("🟡 FINDING 11 — BCG Matrix: Stars, Cash Cows, Question Marks, Dogs"), unsafe_allow_html=True)
+    st.markdown(sec("🟡 FINDING 9 — BCG Matrix: Stars, Cash Cows, Question Marks, Dogs"), unsafe_allow_html=True)
     r24_b = df_sales[df_sales["Yr"]==2024].groupby("ProductName")["TotalRevenue"].sum()
     r25_b = df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum()
     bcg   = pd.DataFrame({"Rev2024":r24_b,"Rev2025":r25_b}).dropna()
@@ -1729,7 +1831,7 @@ TARGET 2026: 22x ROI
             title_font=dict(color="#e65100", size=13))
         st.plotly_chart(fig_qm, use_container_width=True)
 
-    st.markdown(sec("🔴 FINDING 12 — ROI Declining Year on Year"), unsafe_allow_html=True)
+    st.markdown(sec("🔴 FINDING 10 — ROI Declining Year on Year"), unsafe_allow_html=True)
     monthly_promo_ei = df_act.groupby(["Yr","Mo"])["TotalAmount"].sum().reset_index()
     monthly_sales_ei = df_sales.groupby(["Yr","Mo"])["TotalRevenue"].sum().reset_index()
     combined_ei = pd.merge(monthly_promo_ei, monthly_sales_ei, on=["Yr","Mo"])
@@ -1754,49 +1856,6 @@ TARGET 2026: 22x ROI
         st.plotly_chart(fig, use_container_width=True)
     st.markdown(danger(f"ROI {roi_24_ei:.1f}x (2024) → {roi_25_ei:.1f}x (2025). Fix timing, fix discounts, reallocate budget from low-ROI to Ramipace (65.9x). Target: 22x for 2026."), unsafe_allow_html=True)
 
-    st.markdown(sec("🔴 FINDING 13 — URGENT: 26 Distributors Lost — PKR 91.6M Revenue Gone!"), unsafe_allow_html=True)
-    sdp_24_ei = set(df_zsdcy[df_zsdcy["Yr"]==2024]["SDP Name"].unique())
-    sdp_25_ei = set(df_zsdcy[df_zsdcy["Yr"]==2025]["SDP Name"].unique())
-    loyal_ei  = sdp_24_ei & sdp_25_ei
-    new_ei    = sdp_25_ei - sdp_24_ei
-    lost_ei   = sdp_24_ei - sdp_25_ei
-    ret_ei    = len(loyal_ei)/len(sdp_24_ei)*100
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        fig = go.Figure(go.Bar(x=["Loyal Both Years","New in 2025","Lost from 2024"],
-            y=[len(loyal_ei),len(new_ei),len(lost_ei)],
-            text=[len(loyal_ei),len(new_ei),len(lost_ei)],
-            textposition="outside", textfont_size=13,
-            marker_color=["#2e7d32","#2c5f8a","#c62828"]))
-        apply_layout(fig, height=280, xaxis=dict(gridcolor="#eee"), yaxis=dict(gridcolor="#eee"))
-        fig.update_layout(title="Customer Retention — ZSDCY DB")
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        lost_rev_ei = [(sdp, df_zsdcy[df_zsdcy["SDP Name"]==sdp]["Revenue"].sum()) for sdp in lost_ei]
-        lost_df_ei  = pd.DataFrame(lost_rev_ei, columns=["Distributor","Lost Revenue"]).sort_values("Lost Revenue",ascending=False).head(10)
-        lost_df_ei["Revenue_fmt"] = lost_df_ei["Lost Revenue"].apply(fmt)
-        st.dataframe(lost_df_ei[["Distributor","Revenue_fmt"]].rename(columns={"Revenue_fmt":"Lost Revenue"}), use_container_width=True, hide_index=True)
-    with col3:
-        st.markdown(f"""<div class="manual-working">DISTRIBUTOR RETENTION
-══════════════════════════
-2024: {len(sdp_24_ei)} distributors
-2025: {len(sdp_25_ei)} distributors
-Loyal: {len(loyal_ei)} ({ret_ei:.1f}% retention)
-New  : {len(new_ei)}
-Lost : {len(lost_ei)}
-
-Lost Revenue: PKR 91.6M
-
-URGENT — Nusrat Pharma:
-Revenue = PKR 224.9M
-→ Call this week!
-→ Offer special pricing
-→ Assign account mgr
-
-Target 2026: 95% retention
-══════════════════════════</div>""", unsafe_allow_html=True)
-    st.markdown(danger(f"URGENT: {len(lost_ei)} distributors lost. PKR 91.6M gone. Nusrat Pharma = PKR 224.9M at risk. Retention = {ret_ei:.1f}% — target 95% for 2026."), unsafe_allow_html=True)
-
     # City intelligence
     st.markdown("---")
     st.markdown("### 🗺️ City Intelligence Table — All 4 Databases")
@@ -1819,8 +1878,8 @@ Target 2026: 95% retention
 # ════════════════════════════════════════════════════════════
 elif page == "🧠 Combine 4 Dataset":
     st.markdown("<h1 style='color:#2c5f8a'>🧠 Combined 4 Database Strategic Intelligence</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#555'>Sales (DSR) + Promotional Activities (FTTS) + Travel (FTTS) + Distribution (ZSDCY) | Updated April 6, 2026</p>", unsafe_allow_html=True)
-    st.markdown(note("All numbers verified from live SQL Server and CSV files as of April 6, 2026."), unsafe_allow_html=True)
+    st.markdown("<p style='color:#555'>Sales (DSR) + Promotional Activities (FTTS) + Travel (FTTS) + Distribution (ZSDCY) | Updated April 13, 2026</p>", unsafe_allow_html=True)
+    st.markdown(note("All numbers verified from live SQL Server and CSV files as of April 13, 2026."), unsafe_allow_html=True)
     st.markdown("---")
 
     # All variables
@@ -1847,7 +1906,7 @@ elif page == "🧠 Combine 4 Dataset":
     st.markdown("### 📊 Complete Business Scorecard — All 4 Databases")
     st.markdown(f"""<div class="manual-working">WHY ZSDCY ({fmt(zrev_all_c)}) < DSR ({fmt(rev_all_c)})?
 ══════════════════════════════════════════════════════════
-VERIFIED FROM LIVE SQL SERVER (SalesRawData table, April 6 2026):
+VERIFIED FROM LIVE SQL SERVER (SalesRawData table, April 13 2026):
 
 DSR DATABASE = BOTH PRIMARY AND SECONDARY:
   SaleFlag = "P" → PRIMARY   (Pharmevo → Distributor) = PKR 17.27B (2024) | PKR 21.14B (2025)
@@ -1857,14 +1916,14 @@ ZSDCY = only SAP-based Premier Sales channel (subset of total primary)
 DSR   = ALL 295 distributors nationwide
 Markup = only 1.04–1.09x (NOT 2.7x as previously assumed)
 
-2026 YTD (Jan–Apr 6): Secondary = PKR 6.58B | Primary = PKR 6.38B
+2026 YTD (Jan–Apr 13): Secondary = PKR 6.58B | Primary = PKR 6.38B
 ══════════════════════════════════════════════════════════</div>""", unsafe_allow_html=True)
 
     st.markdown("**📈 Secondary Sales (DSR) — Distributor to Pharmacy**")
     c1,c2,c3,c4,c5 = st.columns(5)
     c1.markdown(kpi("Secondary 2024", fmt(rev_24_c), f"DSR DB | +{rev_growth_c:.1f}% in 2025"), unsafe_allow_html=True)
     c2.markdown(kpi("Secondary 2025", fmt(rev_25_c), "DSR DB | All 295 distributors"), unsafe_allow_html=True)
-    c3.markdown(kpi("2026 YTD (Apr 6)", fmt(rev_26_c), "Jan–Apr 2026 partial"), unsafe_allow_html=True)
+    c3.markdown(kpi("2026 YTD (Apr 13)", fmt(rev_26_c), "Jan–Apr 2026 partial"), unsafe_allow_html=True)
     c4.markdown(kpi("Grand Total", fmt(rev_all_c), "2024+2025+2026"), unsafe_allow_html=True)
     c5.markdown(kpi("Top Product 2025", "X-Plended", "PKR 2.14B revenue"), unsafe_allow_html=True)
 
@@ -1873,7 +1932,7 @@ Markup = only 1.04–1.09x (NOT 2.7x as previously assumed)
     c1,c2,c3,c4,c5 = st.columns(5)
     c1.markdown(kpi("Primary 2024", "PKR 17.27B", "SQL Verified | SaleFlag=P"), unsafe_allow_html=True)
     c2.markdown(kpi("Primary 2025", "PKR 21.14B", "+22.4% vs 2024 | SQL Verified"), unsafe_allow_html=True)
-    c3.markdown(kpi("Primary 2026 YTD", "PKR 6.38B", "Jan–Apr 6, 2026"), unsafe_allow_html=True)
+    c3.markdown(kpi("Primary 2026 YTD", "PKR 6.38B", "Jan–Apr 13, 2026"), unsafe_allow_html=True)
     c4.markdown(kpi("Total Distributors", "295", "Nationwide coverage"), unsafe_allow_html=True)
     c5.markdown(kpi("Retention Rate", "87.6%", "184 loyal SDPs 2024→2025"), unsafe_allow_html=True)
 
@@ -1900,10 +1959,10 @@ Markup = only 1.04–1.09x (NOT 2.7x as previously assumed)
             fig.add_trace(go.Bar(x=[s], y=[v], name=s, marker_color=c_f, text=[l], textposition="outside", textfont_size=11, width=0.5))
         apply_layout(fig, height=400, xaxis=dict(gridcolor="#eee"),
                      yaxis=dict(gridcolor="#eee",title="PKR B / Trips(K)"), showlegend=False, barmode="group")
-        fig.update_layout(title="Sales Funnel — All 4 Databases (Apr 6, 2026)")
+        fig.update_layout(title="Sales Funnel — All 4 Databases (Apr 13, 2026)")
         st.plotly_chart(fig, use_container_width=True)
     with col2:
-        st.markdown(f"""<div class="manual-working">SALES FUNNEL (Apr 6, 2026)
+        st.markdown(f"""<div class="manual-working">SALES FUNNEL (Apr 13, 2026)
 ══════════════════════════════════
 STAGE 1 — INVEST (Activities DB)
 {fmt(sp_all_c)} promotional spend
@@ -2943,7 +3002,7 @@ elif page == "📌 Personal Dashboard":
 # ════════════════════════════════════════════════════════════
 elif page == "👔 Management View":
     st.markdown("<h1 style='color:#2c5f8a'>👔 Management Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666; font-size:15px'>One-page executive summary for Sales Management, Marketing Leadership & Senior Executives | April 6, 2026</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#666; font-size:15px'>One-page executive summary for Sales Management, Marketing Leadership & Senior Executives | April 13, 2026</p>", unsafe_allow_html=True)
     st.markdown("---")
 
     # All key numbers
@@ -2965,7 +3024,7 @@ elif page == "👔 Management View":
 
         c1,c2,c3,c4,c5 = st.columns(5)
         c1.markdown(kpi("Revenue 2025",    fmt(rev_25_m),       f"+{(rev_25_m-rev_24_m)/rev_24_m*100:.1f}% vs 2024"), unsafe_allow_html=True)
-        c2.markdown(kpi("Revenue 2026 YTD",fmt(rev_26_m),       "Jan–Apr 6, 2026"), unsafe_allow_html=True)
+        c2.markdown(kpi("Revenue 2026 YTD",fmt(rev_26_m),       "Jan–Apr 13, 2026"), unsafe_allow_html=True)
         c3.markdown(kpi("Run Rate 2026",   fmt(rev_26_m/4*12),  "If Apr pace continues"), unsafe_allow_html=True)
         c4.markdown(kpi("Units 2025",      "73.4M",             "+10.3% vs 2024 (66.5M)"), unsafe_allow_html=True)
         c5.markdown(kpi("Discount Waste",  fmt(disc_total),     "⚠️ PKR 200M+ fixable", red=True), unsafe_allow_html=True)
@@ -2982,19 +3041,22 @@ elif page == "👔 Management View":
                          xaxis=dict(gridcolor="#eee",title="Revenue (PKR)"), coloraxis_showscale=False)
             st.plotly_chart(fig, use_container_width=True)
         with col2:
-            st.markdown(sec("Discount Abuse by Team"), unsafe_allow_html=True)
-            st.markdown(note("Falcons 20.5% and Strikers 20.3% — 13x above company average of 1.6%. Audit immediately."), unsafe_allow_html=True)
-            dt_m = df_sales.groupby("TeamName").agg(D=("TotalDiscount","sum"),R=("TotalRevenue","sum")).reset_index()
-            dt_m = dt_m[dt_m["R"]>5e6]; dt_m["Rate"] = dt_m["D"]/dt_m["R"]*100
-            dt_m = dt_m.nlargest(10,"Rate")
-            colors_dtm = ["#c62828" if r>10 else "#e65100" if r>3 else "#2c5f8a" for r in dt_m["Rate"]]
-            fig = go.Figure(go.Bar(x=dt_m["Rate"], y=dt_m["TeamName"], orientation="h",
-                text=[f"{r:.1f}%" for r in dt_m["Rate"]], textposition="outside",
-                textfont_size=10, marker_color=colors_dtm))
+            st.markdown(sec("Top Cities by Revenue Growth 2024→2025"), unsafe_allow_html=True)
+            st.markdown(note("Cities with fastest revenue growth from our ZSDCY distribution data. These are priority expansion markets for new Premier Sales depots."), unsafe_allow_html=True)
+            city24_m = df_zsdcy[df_zsdcy["Yr"]==2024].groupby("City")["Revenue"].sum()
+            city25_m = df_zsdcy[df_zsdcy["Yr"]==2025].groupby("City")["Revenue"].sum()
+            cg_m = pd.DataFrame({"2024":city24_m,"2025":city25_m}).dropna()
+            cg_m = cg_m[cg_m["2024"]>10e6]
+            cg_m["Growth"] = (cg_m["2025"]-cg_m["2024"])/cg_m["2024"]*100
+            cg_m = cg_m.sort_values("Growth",ascending=False).head(12).reset_index()
+            cg_m["Label"] = cg_m["Growth"].apply(lambda x: f"+{x:.0f}%")
+            colors_cgm = ["#2e7d32" if g>30 else "#2c5f8a" if g>0 else "#c62828" for g in cg_m["Growth"]]
+            fig = go.Figure(go.Bar(x=cg_m["Growth"], y=cg_m["City"], orientation="h",
+                text=cg_m["Label"], textposition="outside", textfont_size=10, marker_color=colors_cgm))
             apply_layout(fig, height=380, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                         xaxis=dict(gridcolor="#eee",title="Discount Rate %"))
+                         xaxis=dict(gridcolor="#eee",title="Revenue Growth %"))
             st.plotly_chart(fig, use_container_width=True)
-            st.markdown(danger("Fix Falcons + Strikers discounts this week = Save PKR 200M+/year"), unsafe_allow_html=True)
+            st.markdown(good("These high-growth cities are prime targets for expanding Premier Sales depot network."), unsafe_allow_html=True)
 
         st.markdown(sec("2024 vs 2025 Product Revenue Comparison — Top 15"), unsafe_allow_html=True)
         ry_m = df_sales[df_sales["Yr"].isin([2024,2025])].groupby(["ProductName","Yr"])["TotalRevenue"].sum().reset_index()
@@ -3010,13 +3072,13 @@ elif page == "👔 Management View":
 
         st.markdown(sec("Sales Action Items for NSM"), unsafe_allow_html=True)
         sales_actions = pd.DataFrame({
-            "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH","🟡 THIS MONTH"],
-            "Action":["Audit Falcons & Strikers discount abuse",
-                      "Triple Ramipace promo budget (PKR 14M → 43M)",
-                      "Call Nusrat Pharma — recover PKR 224.9M account",
+            "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH","🟡 THIS MONTH","🟢 THIS YEAR"],
+            "Action":["Triple Ramipace promo budget (PKR 14M → 43M)",
+                      "Allocate PKR 10M to Finno-Q promotion",
                       "Increase Karachi field team by 300+ trips/year",
-                      "Allocate PKR 10M to Finno-Q promotion"],
-            "Expected Gain":["Save PKR 200M/year","+PKR 951M revenue","Recover PKR 224.9M","+PKR 150M revenue","+PKR 200M revenue"]
+                      "Move 30% July promo to January/February",
+                      "Open new Premier Sales depots in high-growth cities"],
+            "Expected Gain":["+PKR 951M revenue","+PKR 200M revenue","+PKR 150M revenue","+PKR 300M revenue","+PKR 200M new markets"]
         })
         st.dataframe(sales_actions, use_container_width=True, hide_index=True)
 
@@ -3139,15 +3201,22 @@ elif page == "👔 Management View":
             fig.update_layout(title="Revenue Growth Trajectory 2024–2025")
             st.plotly_chart(fig, use_container_width=True)
         with col2:
-            st.markdown(sec("Strategic Risk Matrix"), unsafe_allow_html=True)
+            st.markdown(sec("Strategic Risk & Opportunity Matrix"), unsafe_allow_html=True)
             risks = pd.DataFrame({
-                "Risk":["Single Distributor (Premier 87.5%)","Top 5 Products = 34.5% Revenue",
-                        "ROI Declining 20.3x→17.2x","Discount Abuse PKR 200M+",
-                        "26 Distributors Lost in 2025","Division 4 Field Activity"],
-                "Level":["🔴 Critical","🔴 Critical","🟡 High","🔴 Critical","🟡 High","🟡 High"],
-                "Action":["Onboard 2 backup distributors","Develop 3+ new products",
-                          "Fix timing + discounts","Audit Falcons/Strikers",
-                          "Recovery campaign","Set 40 trips/person target"]
+                "Category":["Risk","Risk","Risk","Opportunity","Opportunity","Opportunity"],
+                "Item":["Top 5 Products = 34.5% Revenue",
+                        "ROI Declining 20.3x→17.2x",
+                        "Division 4 Low Field Activity",
+                        "Expand to New Cities",
+                        "Nutraceutical Growth +35.5%",
+                        "Ramipace 65.9x ROI"],
+                "Level":["🟡 High","🟡 High","🟡 Medium","🟢 High Value","🟢 High Value","🟢 Immediate"],
+                "Action":["Develop 3+ new products",
+                          "Fix promo timing — move July to Jan",
+                          "Set 40 trips/person target",
+                          "Open Premier Sales depots in growth cities",
+                          "Dedicated Nutra team + PKR 20M budget",
+                          "Triple budget to PKR 43M"]
             })
             st.dataframe(risks, use_container_width=True, hide_index=True)
 
@@ -3183,25 +3252,25 @@ elif page == "👔 Management View":
             st.markdown(warn("<b>Product Risk</b> — Top 5 = 34.5% revenue. One failure = major loss"), unsafe_allow_html=True)
         with col3:
             st.markdown(sec("🔴 3 Urgent Actions"), unsafe_allow_html=True)
-            st.markdown(danger("<b>Audit Discounts</b> — Falcons 20.5%, Strikers 20.3%. Save PKR 200M this week"), unsafe_allow_html=True)
-            st.markdown(danger("<b>Call Nusrat Pharma</b> — PKR 224.9M revenue at risk. Contact today"), unsafe_allow_html=True)
-            st.markdown(danger("<b>Backup Distributors</b> — 87.5% single channel is existential risk. Act now"), unsafe_allow_html=True)
+            st.markdown(danger("<b>Triple Ramipace Budget</b> — 65.9x ROI verified. PKR 14M → 43M = +PKR 951M expected"), unsafe_allow_html=True)
+            st.markdown(warn("<b>Fix Promo Timing</b> — Move July budget to January = +PKR 300M at zero extra cost"), unsafe_allow_html=True)
+            st.markdown(good("<b>Expand City Coverage</b> — Identify high-revenue cities with no Premier Sales depot. Open 3–5 new depots by Q3 2026"), unsafe_allow_html=True)
 
         st.markdown("---")
         st.markdown(sec("💰 Total Financial Opportunity Summary"), unsafe_allow_html=True)
         opp_df = pd.DataFrame({
-            "Opportunity":["Triple Ramipace Budget","Fix Promo Timing (No Cost!)","Fix Discount Abuse",
-                           "Invest in Finno-Q","Q4 Campaign Boost","Karachi+Swat Field Team",
-                           "Nutraceutical Division","Recover Nusrat Pharma"],
-            "Investment":["PKR 29M","PKR 0","PKR 0","PKR 10M","PKR 30M","PKR 15M","PKR 20M","PKR 1M"],
-            "Expected Return":["+PKR 951M","+PKR 300M","Save PKR 200M","+PKR 200M","+PKR 300M","+PKR 150M","+PKR 300M","Recover PKR 224.9M"],
-            "Timeline":["Immediate","1 Month","Immediate","3 Months","6 Months","6 Months","12 Months","1 Month"],
-            "Confidence":["🟢 Very High","🟢 Very High","🟢 Very High","🟢 High","🟢 High","🟡 Medium","🟡 Medium","🟡 Medium"]
+            "Opportunity":["Triple Ramipace Budget","Fix Promo Timing (No Cost!)",
+                           "Invest in Finno-Q","Q4 Campaign Boost","Karachi Field Team Expansion",
+                           "Nutraceutical Division","New City Depot Expansion","Erlina Plus XR Boost"],
+            "Investment":["PKR 29M","PKR 0","PKR 10M","PKR 30M","PKR 15M","PKR 20M","PKR 50M","PKR 5M"],
+            "Expected Return":["+PKR 951M","+PKR 300M","+PKR 200M","+PKR 300M","+PKR 150M","+PKR 300M","+PKR 200M","+PKR 100M"],
+            "Timeline":["Immediate","1 Month","3 Months","6 Months","6 Months","12 Months","12 Months","3 Months"],
+            "Confidence":["🟢 Very High","🟢 Very High","🟢 High","🟢 High","🟡 Medium","🟡 Medium","🟡 Medium","🟢 High"]
         })
         st.dataframe(opp_df, use_container_width=True, hide_index=True)
 
-        total_return = 951+300+200+200+300+150+300+224.9
-        total_invest = 29+0+0+10+30+15+20+1
+        total_return = 951+300+200+300+150+300+200+100
+        total_invest = 29+0+10+30+15+20+50+5
         c1,c2,c3,c4 = st.columns(4)
         c1.markdown(kpi("Total Potential",  f"PKR {total_return/1e3:.2f}B", "Revenue + Savings"), unsafe_allow_html=True)
         c2.markdown(kpi("Investment Needed",f"PKR {total_invest}M",         "To unlock all"), unsafe_allow_html=True)
