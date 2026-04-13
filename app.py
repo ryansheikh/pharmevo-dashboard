@@ -3315,30 +3315,217 @@ Double Xcept budget → +PKR 300M revenue.</div>""", unsafe_allow_html=True)
 
         with col2:
             st.markdown(sec("🌿 Category Growth: Nutraceutical vs Pharma"), unsafe_allow_html=True)
-            cat_m2 = df_zsdcy.groupby(["Category","Yr"])["Revenue"].sum().reset_index()
-            cat_m2["Name"] = cat_m2["Category"].map({"P":"Pharma","N":"Nutraceutical","M":"Medical Device","H":"Herbal","E":"Export"})
-            cat_main_m = cat_m2[cat_m2["Category"].isin(["P","N"])].copy()
-            cat_main_m["Label"] = cat_main_m["Revenue"].apply(fmt)
-            fig = px.bar(cat_main_m, x="Yr", y="Revenue", color="Name", barmode="group", text="Label",
-                color_discrete_map={"Pharma":"#2c5f8a","Nutraceutical":"#7b1fa2"})
-            fig.update_traces(textposition="outside", textfont_size=10)
-            apply_layout(fig, height=300, xaxis=dict(gridcolor="#eee"), yaxis=dict(gridcolor="#eee"))
+            st.markdown(note("Nutra 2024=PKR 932M → 2025=PKR 1,263M (+35.5%). Pharma 2024=PKR 6.57B → 2025=PKR 8.41B (+28.0%). Different scales so shown separately."), unsafe_allow_html=True)
+
+            nutra_24_mk2 = df_zsdcy[(df_zsdcy["Category"]=="N")&(df_zsdcy["Yr"]==2024)]["Revenue"].sum() if len(df_zsdcy)>0 else 932.3e6
+            nutra_25_mk2 = df_zsdcy[(df_zsdcy["Category"]=="N")&(df_zsdcy["Yr"]==2025)]["Revenue"].sum() if len(df_zsdcy)>0 else 1263.4e6
+            pharma_24_mk2= df_zsdcy[(df_zsdcy["Category"]=="P")&(df_zsdcy["Yr"]==2024)]["Revenue"].sum() if len(df_zsdcy)>0 else 6.569e9
+            pharma_25_mk2= df_zsdcy[(df_zsdcy["Category"]=="P")&(df_zsdcy["Yr"]==2025)]["Revenue"].sum() if len(df_zsdcy)>0 else 8.409e9
+            nutra_g_mk2  = (nutra_25_mk2-nutra_24_mk2)/nutra_24_mk2*100 if nutra_24_mk2>0 else 35.5
+            pharma_g_mk2 = (pharma_25_mk2-pharma_24_mk2)/pharma_24_mk2*100 if pharma_24_mk2>0 else 28.0
+
+            # Growth % comparison (same scale — best view)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=["Pharma 2024→2025", "Nutraceutical 2024→2025"],
+                y=[pharma_g_mk2, nutra_g_mk2],
+                text=[f"+{pharma_g_mk2:.1f}% (PKR {pharma_24_mk2/1e9:.2f}B→{pharma_25_mk2/1e9:.2f}B)",
+                      f"+{nutra_g_mk2:.1f}% (PKR {nutra_24_mk2/1e6:.0f}M→{nutra_25_mk2/1e6:.0f}M)"],
+                textposition="outside",
+                marker_color=["#2c5f8a","#7b1fa2"],
+                textfont_size=11
+            ))
+            apply_layout(fig, height=300,
+                xaxis=dict(gridcolor="#eee"),
+                yaxis=dict(gridcolor="#eee", title="Revenue Growth %"),
+                showlegend=False)
+            fig.update_layout(title="Growth Rate 2024→2025 — Nutraceutical Growing Faster (+35.5% vs +28.0%)")
             st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown(sec("🚀 Fastest Growing Products 2024→2025"), unsafe_allow_html=True)
+            # Absolute values side by side (correct scale per category)
+            fig2 = make_subplots(specs=[[{"secondary_y": True}]])
+            fig2.add_trace(go.Bar(
+                x=["2024","2025"], y=[pharma_24_mk2/1e9, pharma_25_mk2/1e9],
+                name="Pharma (PKR B)", marker_color="#2c5f8a",
+                text=[f"PKR {pharma_24_mk2/1e9:.2f}B", f"PKR {pharma_25_mk2/1e9:.2f}B"],
+                textposition="outside", textfont_size=10
+            ), secondary_y=False)
+            fig2.add_trace(go.Bar(
+                x=["2024","2025"], y=[nutra_24_mk2/1e6, nutra_25_mk2/1e6],
+                name="Nutraceutical (PKR M)", marker_color="#7b1fa2",
+                text=[f"PKR {nutra_24_mk2/1e6:.0f}M", f"PKR {nutra_25_mk2/1e6:.0f}M"],
+                textposition="outside", textfont_size=10
+            ), secondary_y=True)
+            apply_layout(fig2, height=300, barmode="group")
+            fig2.update_yaxes(title_text="Pharma Revenue (PKR Billions)", gridcolor="#eee", secondary_y=False)
+            fig2.update_yaxes(title_text="Nutraceutical Revenue (PKR Millions)", gridcolor="#eee", secondary_y=True)
+            fig2.update_layout(title="Pharma vs Nutraceutical — Absolute Revenue (Dual Axis)")
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown(sec("🚀 Fastest Growing Products 2024→2025 — With Activity Drill-Down"), unsafe_allow_html=True)
+        st.markdown(note("Growth = % change in DSR revenue 2024→2025. Min PKR 5M base in 2024. Gold=Finno-Q. Select a product below to see what activities drove its growth."), unsafe_allow_html=True)
+
         r24_m2 = df_sales[df_sales["Yr"]==2024].groupby("ProductName")["TotalRevenue"].sum()
         r25_m2 = df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum()
         gdf_m  = pd.DataFrame({"r24":r24_m2,"r25":r25_m2}).dropna()
-        gdf_m  = gdf_m[gdf_m["r24"]>5e6]; gdf_m["g"] = (gdf_m["r25"]-gdf_m["r24"])/gdf_m["r24"]*100
+        gdf_m  = gdf_m[gdf_m["r24"]>5e6]
+        gdf_m["g"] = (gdf_m["r25"]-gdf_m["r24"])/gdf_m["r24"]*100
         top_g  = gdf_m.nlargest(15,"g").reset_index()
         colors_gm = ["#FFD700" if "FINNO" in p.upper() else "#e65100" if g>100 else "#2c5f8a" for p,g in zip(top_g["ProductName"],top_g["g"])]
-        fig = go.Figure(go.Bar(x=top_g["g"], y=top_g["ProductName"], orientation="h",
-            text=top_g["g"].apply(lambda x: f"+{x:.0f}%"), textposition="outside",
-            textfont_size=9, marker_color=colors_gm))
-        apply_layout(fig, height=480, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                     xaxis=dict(gridcolor="#eee",title="Growth %"))
-        fig.update_layout(title="Top 15 Fastest Growing Products 2024→2025 (Gold=Finno-Q)")
-        st.plotly_chart(fig, use_container_width=True)
+
+        col_g1, col_g2 = st.columns([3,2])
+        with col_g1:
+            fig = go.Figure(go.Bar(
+                x=top_g["g"], y=top_g["ProductName"], orientation="h",
+                text=[f"+{g:.0f}% | {r24/1e6:.0f}M → {r25/1e6:.0f}M"
+                      for g,r24,r25 in zip(top_g["g"],top_g["r24"],top_g["r25"])],
+                textposition="outside", textfont_size=9, marker_color=colors_gm))
+            apply_layout(fig, height=500, yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee",title="Revenue Growth % 2024→2025"))
+            fig.update_layout(title="Top 15 Fastest Growing Products (Gold=Finno-Q +233%)")
+            st.plotly_chart(fig, use_container_width=True)
+        with col_g2:
+            st.markdown("""<div class="manual-working">TOP 15 GROWTH PRODUCTS
+══════════════════════════════════
+  Erlina Plus XR   +699% | 7.8M→62.1M
+  Finno-Q          +233% | 11.3M→37.7M
+  Zilero           +122% | 8.4M→18.8M
+  Aircare Plus     +100% | 9.4M→18.8M
+  Itipso           +99%  | 13.1M→26.1M
+  Retzole          +81%  | 33.4M→60.5M
+  Erli Plus        +67%  | 95.1M→159.3M
+  Omron Nebulizer  +62%  | 7.0M→11.3M
+  Vible            +61%  | 56.4M→90.8M
+  Anplag           +58%  | 276.3M→435.4M
+  Erlina           +57%  | 181.7M→284.3M
+  Dapwiz Plus XR   +52%  | 22.9M→34.8M
+  Fasteso          +52%  | 29.3M→44.5M
+  Actnise          +49%  | 26.3M→39.1M
+  Kalsob           +43%  | 257.9M→369.7M
+══════════════════════════════════
+All PKR values from DSR SQL Server</div>""", unsafe_allow_html=True)
+
+        # ── Growth Product Activity Drill-Down ──
+        st.markdown("---")
+        st.markdown(sec("🔍 What Activities Drove This Growth? — Select Product"), unsafe_allow_html=True)
+        st.markdown(note("Live from FTTS SQL — vw_AllRequestsDetails. Shows DetailOfActivity: exactly what was done (doctor sessions, screenings, equipment donations etc.) that pushed this product's growth."), unsafe_allow_html=True)
+
+        grow_drill = st.selectbox(
+            "Select growing product to see its activities:",
+            options=top_g["ProductName"].tolist(),
+            index=0,
+            key="mkt_grow_drill"
+        )
+
+        grow_r24 = top_g[top_g["ProductName"]==grow_drill]["r24"].values[0] if len(top_g[top_g["ProductName"]==grow_drill])>0 else 0
+        grow_r25 = top_g[top_g["ProductName"]==grow_drill]["r25"].values[0] if len(top_g[top_g["ProductName"]==grow_drill])>0 else 0
+        grow_pct = top_g[top_g["ProductName"]==grow_drill]["g"].values[0] if len(top_g[top_g["ProductName"]==grow_drill])>0 else 0
+
+        cg1, cg2, cg3 = st.columns(3)
+        cg1.markdown(kpi(grow_drill, f"+{grow_pct:.0f}% Growth", "2024→2025 DSR"), unsafe_allow_html=True)
+        cg2.markdown(kpi("Revenue 2024", f"PKR {grow_r24/1e6:.1f}M", "DSR baseline"), unsafe_allow_html=True)
+        cg3.markdown(kpi("Revenue 2025", f"PKR {grow_r25/1e6:.1f}M", f"+PKR {(grow_r25-grow_r24)/1e6:.1f}M added"), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        try:
+            ftts_conn = get_ftts_connection()
+            if ftts_conn:
+                grow_detail = pd.read_sql(f"""
+                    SELECT TOP 50
+                        ISNULL(RequestorTeams, 'Unknown')   AS Team,
+                        ISNULL(TransfereeTeams, 'Unknown')  AS TransfereeTeam,
+                        ISNULL(ActivityHead, 'Other')       AS ActivityHead,
+                        ISNULL(DetailOfActivity, '')        AS DetailOfActivity,
+                        ISNULL(GLHead, 'Other')             AS GLHead,
+                        CAST(ISNULL(Amount, 0) AS BIGINT)   AS Amount,
+                        CAST(BudgetDate AS DATE)            AS Date
+                    FROM vw_AllRequestsDetails
+                    WHERE TransType = 'Activity'
+                      AND UPPER(Product) LIKE '%{grow_drill.upper().split()[0]}%'
+                      AND BudgetDate IS NOT NULL
+                    ORDER BY Amount DESC
+                """, ftts_conn)
+
+                if len(grow_detail) > 0:
+                    grow_detail["Amount (PKR)"] = grow_detail["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                    st.markdown(f"**📋 {len(grow_detail)} Activity Records for {grow_drill} — What drove +{grow_pct:.0f}% growth**")
+                    display_grow = grow_detail[["Date","Team","TransfereeTeam","ActivityHead","DetailOfActivity","Amount (PKR)"]].copy()
+                    display_grow["DetailOfActivity"] = display_grow["DetailOfActivity"].str[:120]
+                    st.dataframe(display_grow, use_container_width=True, hide_index=True,
+                                 column_config={
+                                     "DetailOfActivity": st.column_config.TextColumn("Detail of Activity (What We Did)", width="large"),
+                                     "Team": st.column_config.TextColumn("Team", width="medium"),
+                                     "TransfereeTeam": st.column_config.TextColumn("Transferee Team", width="medium"),
+                                     "ActivityHead": st.column_config.TextColumn("Activity Type", width="medium"),
+                                     "Amount (PKR)": st.column_config.TextColumn("Amount", width="small"),
+                                 })
+
+                    cg_t1, cg_t2 = st.columns(2)
+                    with cg_t1:
+                        st.markdown(f"**👥 Teams That Worked on {grow_drill}**")
+                        by_t = grow_detail.groupby("Team")["Amount"].sum().reset_index().sort_values("Amount",ascending=False).head(10)
+                        by_t["Label"] = by_t["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                        fig = px.bar(by_t, x="Amount", y="Team", orientation="h",
+                            text="Label", color="Amount", color_continuous_scale="Blues")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260, len(by_t)*36),
+                            yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee", title="Total Spend (PKR)"),
+                            coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    with cg_t2:
+                        st.markdown(f"**📂 What Type of Activities Were Done**")
+                        by_a = grow_detail.groupby("ActivityHead")["Amount"].sum().reset_index().sort_values("Amount",ascending=False)
+                        by_a["Label"] = by_a["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                        fig = px.bar(by_a, x="Amount", y="ActivityHead", orientation="h",
+                            text="Label", color="Amount", color_continuous_scale="Greens")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260, len(by_a)*36),
+                            yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee", title="Total Spend (PKR)"),
+                            coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info(f"No activity records in vw_AllRequestsDetails for {grow_drill}. This product grew organically without recorded promotional spend — a strong signal to NOW invest in it.")
+                    # Show from CSV
+                    act_csv = df_act[df_act["Product"].str.upper().str.contains(grow_drill.upper().split()[0], na=False)]
+                    if len(act_csv) > 0:
+                        st.markdown(f"**From activities_clean.csv — {len(act_csv)} records:**")
+                        by_head_csv = act_csv.groupby("ActivityHead")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False)
+                        by_head_csv["Amount"] = by_head_csv["TotalAmount"].apply(fmt)
+                        st.dataframe(by_head_csv[["ActivityHead","Amount"]], use_container_width=True, hide_index=True)
+            else:
+                st.warning("SQL unavailable — showing from activities CSV")
+                act_csv2 = df_act[df_act["Product"].str.upper().str.contains(grow_drill.upper().split()[0], na=False)]
+                if len(act_csv2) > 0:
+                    cg_t1, cg_t2 = st.columns(2)
+                    with cg_t1:
+                        by_t2 = act_csv2.groupby("RequestorTeams")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False).head(10)
+                        by_t2["Label"] = by_t2["TotalAmount"].apply(fmt)
+                        fig = px.bar(by_t2, x="TotalAmount", y="RequestorTeams", orientation="h",
+                            text="Label", color="TotalAmount", color_continuous_scale="Blues",
+                            title=f"Teams — {grow_drill}")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260,len(by_t2)*36),
+                            yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee",title="Spend (PKR)"), coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    with cg_t2:
+                        by_a2 = act_csv2.groupby("ActivityHead")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False).head(8)
+                        by_a2["Label"] = by_a2["TotalAmount"].apply(fmt)
+                        fig = px.bar(by_a2, x="TotalAmount", y="ActivityHead", orientation="h",
+                            text="Label", color="TotalAmount", color_continuous_scale="Greens",
+                            title=f"Activity Types — {grow_drill}")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260,len(by_a2)*36),
+                            yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee",title="Spend (PKR)"), coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info(f"No activity records found for {grow_drill} — grew organically.")
+        except Exception as e:
+            st.error(f"Growth drill-down error: {e}")
 
         st.markdown(sec("Marketing Action Items for CMO"), unsafe_allow_html=True)
         mkt_actions = pd.DataFrame({
