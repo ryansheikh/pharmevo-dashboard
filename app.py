@@ -3157,10 +3157,10 @@ ACTION: Xcept has 48x ROI but only
 PKR 27.7M spend — severely underinvested.
 Double Xcept budget → +PKR 300M revenue.</div>""", unsafe_allow_html=True)
 
-        # ── Activity Drill-Down per Product ──
+        # ── Activity Drill-Down per Product — uses vw_AllRequestsDetails live ──
         st.markdown("---")
         st.markdown(sec("🔍 Activity Drill-Down — What Activities Drove Each Product's ROI"), unsafe_allow_html=True)
-        st.markdown(note("Select a product to see exactly which activities, teams and details drove its promotional spend from FTTS database (vw_AllRequestsDetails — DetailOfActivity column)."), unsafe_allow_html=True)
+        st.markdown(note("Live from FTTS SQL — vw_AllRequestsDetails. Shows exact DetailOfActivity text, which team did it, and amount spent. Select a product to drill in."), unsafe_allow_html=True)
 
         drill_prod = st.selectbox(
             "Select product to drill into:",
@@ -3169,61 +3169,125 @@ Double Xcept budget → +PKR 300M revenue.</div>""", unsafe_allow_html=True)
             key="mkt_drill_prod"
         )
 
-        col_d1, col_d2 = st.columns([1,3])
-        with col_d1:
-            prod_roi_val = top_r[top_r["ProductName"]==drill_prod]["ROI"].values[0] if len(top_r[top_r["ProductName"]==drill_prod])>0 else 0
-            prod_rev_val = top_r[top_r["ProductName"]==drill_prod]["Rev"].values[0] if len(top_r[top_r["ProductName"]==drill_prod])>0 else 0
-            prod_sp_val  = top_r[top_r["ProductName"]==drill_prod]["Spend"].values[0] if len(top_r[top_r["ProductName"]==drill_prod])>0 else 0
-            st.markdown(kpi(f"{drill_prod}", f"ROI: {prod_roi_val:.1f}x", f"Rev: {fmt(prod_rev_val)} | Spend: {fmt(prod_sp_val)}"), unsafe_allow_html=True)
+        prod_roi_val = top_r[top_r["ProductName"]==drill_prod]["ROI"].values[0] if len(top_r[top_r["ProductName"]==drill_prod])>0 else 0
+        prod_rev_val = top_r[top_r["ProductName"]==drill_prod]["Rev"].values[0] if len(top_r[top_r["ProductName"]==drill_prod])>0 else 0
+        prod_sp_val  = top_r[top_r["ProductName"]==drill_prod]["Spend"].values[0] if len(top_r[top_r["ProductName"]==drill_prod])>0 else 0
 
-        # Pull activity details from activities CSV
+        c_kpi1, c_kpi2, c_kpi3, c_kpi4 = st.columns(4)
+        c_kpi1.markdown(kpi(drill_prod, f"ROI: {prod_roi_val:.1f}x", "Live verified"), unsafe_allow_html=True)
+        c_kpi2.markdown(kpi("Revenue", fmt(prod_rev_val), "DSR Sales DB"), unsafe_allow_html=True)
+        c_kpi3.markdown(kpi("Promo Spend", fmt(prod_sp_val), "FTTS Activities DB"), unsafe_allow_html=True)
+        c_kpi4.markdown(kpi("Efficiency", f"PKR {prod_rev_val/prod_sp_val:.0f} per PKR 1" if prod_sp_val>0 else "N/A", "Revenue per PKR spent"), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Pull DetailOfActivity from live SQL via vw_AllRequestsDetails
         try:
-            act_drill = df_act[df_act["Product"].str.upper().str.contains(drill_prod.upper().split()[0], na=False)].copy()
-            if len(act_drill) > 0:
-                with col_d2:
-                    st.markdown(f"**Activity breakdown for {drill_prod} — {len(act_drill):,} activity records**")
-                    # By activity head
-                    by_head = act_drill.groupby("ActivityHead")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False)
-                    by_head["Amount"] = by_head["TotalAmount"].apply(fmt)
-                    by_head["% of Spend"] = (by_head["TotalAmount"]/by_head["TotalAmount"].sum()*100).apply(lambda x: f"{x:.1f}%")
-                    st.dataframe(by_head[["ActivityHead","Amount","% of Spend"]], use_container_width=True, hide_index=True)
+            ftts_conn = get_ftts_connection()
+            if ftts_conn:
+                detail_df = pd.read_sql(f"""
+                    SELECT TOP 100
+                        ISNULL(RequestorTeams, 'Unknown')   AS Team,
+                        ISNULL(TransfereeTeams, 'Unknown')  AS TransfereeTeam,
+                        ISNULL(ActivityHead, 'Other')       AS ActivityHead,
+                        ISNULL(DetailOfActivity, '')        AS DetailOfActivity,
+                        ISNULL(GLHead, 'Other')             AS GLHead,
+                        CAST(ISNULL(Amount, 0) AS BIGINT)   AS Amount,
+                        CAST(BudgetDate AS DATE)            AS Date
+                    FROM vw_AllRequestsDetails
+                    WHERE TransType = 'Activity'
+                      AND UPPER(Product) LIKE '%{drill_prod.upper().split()[0]}%'
+                      AND BudgetDate IS NOT NULL
+                    ORDER BY Amount DESC
+                """, ftts_conn)
+
+                if len(detail_df) > 0:
+                    detail_df["Amount (PKR)"] = detail_df["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                    st.markdown(f"**📋 {len(detail_df)} Activity Records for {drill_prod} — Sorted by Amount (Highest First)**")
+                    st.markdown(note(f"Showing DetailOfActivity from FTTS vw_AllRequestsDetails. These are the actual activities PharmEvo performed to achieve {prod_roi_val:.1f}x ROI on {drill_prod}."), unsafe_allow_html=True)
+
+                    # Show the detail table side by side: Team | DetailOfActivity | Amount
+                    display_df = detail_df[["Date","Team","TransfereeTeam","ActivityHead","DetailOfActivity","Amount (PKR)"]].copy()
+                    display_df["DetailOfActivity"] = display_df["DetailOfActivity"].str[:120]  # truncate for display
+                    st.dataframe(display_df, use_container_width=True, hide_index=True,
+                                 column_config={
+                                     "DetailOfActivity": st.column_config.TextColumn("Detail of Activity", width="large"),
+                                     "Team": st.column_config.TextColumn("Requestor Team", width="medium"),
+                                     "TransfereeTeam": st.column_config.TextColumn("Transferee Team", width="medium"),
+                                     "ActivityHead": st.column_config.TextColumn("Activity Type", width="medium"),
+                                     "Amount (PKR)": st.column_config.TextColumn("Amount", width="small"),
+                                 })
+
+                    # Side by side: Team chart + Activity type breakdown
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        st.markdown(f"**👥 Which Teams Spent on {drill_prod}**")
+                        by_team = detail_df.groupby("Team")["Amount"].sum().reset_index().sort_values("Amount",ascending=False).head(10)
+                        by_team["Label"] = by_team["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                        fig = px.bar(by_team, x="Amount", y="Team", orientation="h",
+                            text="Label", color="Amount", color_continuous_scale="Blues")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260, len(by_team)*36),
+                            yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee", title="Total Spend (PKR)"),
+                            coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    with col_t2:
+                        st.markdown(f"**📂 Activity Type Breakdown for {drill_prod}**")
+                        by_act = detail_df.groupby("ActivityHead")["Amount"].sum().reset_index().sort_values("Amount",ascending=False)
+                        by_act["Label"] = by_act["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                        by_act["Pct"]   = (by_act["Amount"]/by_act["Amount"].sum()*100).apply(lambda x: f"{x:.1f}%")
+                        fig = px.bar(by_act, x="Amount", y="ActivityHead", orientation="h",
+                            text="Label", color="Amount", color_continuous_scale="Oranges")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260, len(by_act)*36),
+                            yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee", title="Total Spend (PKR)"),
+                            coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+
+                else:
+                    st.info(f"No activity records found for {drill_prod} in vw_AllRequestsDetails. This product may have been promoted through RequestMaster only.")
+                    # Fallback to CSV
+                    act_fb = df_act[df_act["Product"].str.upper().str.contains(drill_prod.upper().split()[0], na=False)]
+                    if len(act_fb) > 0:
+                        st.markdown(f"**Fallback — from activities_clean.csv ({len(act_fb):,} records):**")
+                        by_team_fb = act_fb.groupby("RequestorTeams")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False)
+                        by_team_fb["Amount"] = by_team_fb["TotalAmount"].apply(fmt)
+                        st.dataframe(by_team_fb[["RequestorTeams","Amount"]], use_container_width=True, hide_index=True)
             else:
-                with col_d2:
-                    st.info(f"No activity records in CSV for {drill_prod}. This product may have minimal promotional spend.")
+                # No live connection — fallback to CSV with available columns
+                st.warning("Live SQL not available — showing summary from activities_clean.csv")
+                act_fb = df_act[df_act["Product"].str.upper().str.contains(drill_prod.upper().split()[0], na=False)]
+                if len(act_fb) > 0:
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        by_team_fb = act_fb.groupby("RequestorTeams")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False).head(10)
+                        by_team_fb["Amount"] = by_team_fb["TotalAmount"].apply(fmt)
+                        fig = px.bar(by_team_fb, x="TotalAmount", y="RequestorTeams", orientation="h",
+                            text="Amount", color="TotalAmount", color_continuous_scale="Blues",
+                            title=f"Teams — {drill_prod}")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260,len(by_team_fb)*36),
+                            yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee",title="Spend (PKR)"), coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                    with col_t2:
+                        by_gl_fb = act_fb.groupby("GLHead")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False).head(8)
+                        by_gl_fb["Amount"] = by_gl_fb["TotalAmount"].apply(fmt)
+                        fig = px.bar(by_gl_fb, x="TotalAmount", y="GLHead", orientation="h",
+                            text="Amount", color="TotalAmount", color_continuous_scale="Oranges",
+                            title=f"GL Head — {drill_prod}")
+                        fig.update_traces(textposition="outside", textfont_size=9)
+                        apply_layout(fig, height=max(260,len(by_gl_fb)*36),
+                            yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee",title="Spend (PKR)"), coloraxis_showscale=False)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info(f"No records found for {drill_prod}")
         except Exception as e:
-            with col_d2:
-                st.warning(f"Could not load drill-down: {e}")
-
-        # Team breakdown for selected product
-        st.markdown(f"**Team & GLHead Breakdown for {drill_prod}**")
-        try:
-            act_drill2 = df_act[df_act["Product"].str.upper().str.contains(drill_prod.upper().split()[0], na=False)].copy()
-            if len(act_drill2) > 0:
-                col_t1, col_t2 = st.columns(2)
-                with col_t1:
-                    by_team = act_drill2.groupby("RequestorTeams")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False).head(10)
-                    by_team["Amount"] = by_team["TotalAmount"].apply(fmt)
-                    fig = px.bar(by_team, x="TotalAmount", y="RequestorTeams", orientation="h",
-                        text="Amount", color="TotalAmount", color_continuous_scale="Blues",
-                        title=f"Top Teams Spending on {drill_prod}")
-                    fig.update_traces(textposition="outside", textfont_size=9)
-                    apply_layout(fig, height=max(280, len(by_team)*32),
-                        yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                        xaxis=dict(gridcolor="#eee",title="Spend (PKR)"), coloraxis_showscale=False)
-                    st.plotly_chart(fig, use_container_width=True)
-                with col_t2:
-                    by_gl = act_drill2.groupby("GLHead")["TotalAmount"].sum().reset_index().sort_values("TotalAmount",ascending=False).head(8)
-                    by_gl["Amount"] = by_gl["TotalAmount"].apply(fmt)
-                    fig = px.bar(by_gl, x="TotalAmount", y="GLHead", orientation="h",
-                        text="Amount", color="TotalAmount", color_continuous_scale="Oranges",
-                        title=f"GL Head Breakdown for {drill_prod}")
-                    fig.update_traces(textposition="outside", textfont_size=9)
-                    apply_layout(fig, height=max(280, len(by_gl)*32),
-                        yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                        xaxis=dict(gridcolor="#eee",title="Spend (PKR)"), coloraxis_showscale=False)
-                    st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.warning(f"Team breakdown error: {e}")
+            st.error(f"Drill-down error: {e}")
 
         st.markdown("---")
 
