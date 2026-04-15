@@ -1293,10 +1293,11 @@ PKR 27.7M spend — increase immediately.
         col1,col2 = st.columns(2)
         with col1:
             st.markdown(sec("ROI Bubble Chart — All Products"), unsafe_allow_html=True)
-            rp = roi_df[roi_df["ROI"]<200].copy()
-            fig = px.scatter(rp,x="Spend",y="Rev",size="ROI",color="ROI",
+            rp = roi_df[(roi_df["ROI"]>0) & (roi_df["ROI"]<200)].copy()
+            rp["BubbleSize"] = rp["ROI"].clip(lower=1)  # ensure all positive for bubble size
+            fig = px.scatter(rp,x="Spend",y="Rev",size="BubbleSize",color="ROI",
                 hover_name="ProductName",color_continuous_scale="RdYlGn",size_max=50,
-                labels={"Spend":"Promo Spend (PKR)","Rev":"Revenue (PKR)"})
+                labels={"Spend":"Promo Spend (PKR)","Rev":"Revenue (PKR)","BubbleSize":"ROI"})
             apply_layout(fig,height=380)
             fig.update_layout(title="ROI Bubble — Size = ROI. Top-left = best zone")
             st.plotly_chart(fig,use_container_width=True)
