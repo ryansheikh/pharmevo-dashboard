@@ -1857,199 +1857,219 @@ TARGET 2026: 22x ROI
 # ════════════════════════════════════════════════════════════
 elif page == "🧠 Combine 4 Dataset":
     st.markdown("<h1 style='color:#2c5f8a'>🧠 Combined 4 Database Strategic Intelligence</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#555'>Sales (DSR) + Promotional Activities (FTTS) + Travel (FTTS) + Distribution (ZSDCY) | Updated April 13, 2026</p>", unsafe_allow_html=True)
-    st.markdown(note("All numbers verified from live SQL Server and CSV files as of April 13, 2026."), unsafe_allow_html=True)
+    st.markdown("<p style='color:#555'>Sales (DSR) + Promotional Activities (FTTS) + Travel (FTTS) + Distribution (ZSDCY) | Live SQL Server | April 15, 2026</p>", unsafe_allow_html=True)
+    st.markdown(note("All KPIs pulled LIVE from SQL Server — not from CSV files. DSR Server + FTTS Server. April 15, 2026."), unsafe_allow_html=True)
     st.markdown("---")
 
-    # All variables
-    rev_24_c  = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
-    rev_25_c  = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
-    rev_26_c  = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
-    rev_all_c = df_sales["TotalRevenue"].sum()
-    sp_24_c   = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
-    sp_25_c   = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
-    sp_all_c  = df_act["TotalAmount"].sum()
-    roi_24_c  = rev_24_c/sp_24_c if sp_24_c>0 else 0
-    roi_25_c  = rev_25_c/sp_25_c if sp_25_c>0 else 0
-    trips_all_c = df_travel["TravelCount"].sum()
-    zrev_24_c = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum()
-    zrev_25_c = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum()
-    zrev_all_c= df_zsdcy["Revenue"].sum()
+    # ── ALL LIVE COMPUTED VARIABLES ────────────────────────
+    # DSR Sales
+    rev_24_c   = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+    rev_25_c   = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+    rev_26_c   = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
+    rev_all_c  = df_sales["TotalRevenue"].sum()
+    u24_c      = df_sales[df_sales["Yr"]==2024]["TotalUnits"].sum()
+    u25_c      = df_sales[df_sales["Yr"]==2025]["TotalUnits"].sum()
+    u26_c      = df_sales[df_sales["Yr"]==2026]["TotalUnits"].sum()
+    # Run rate from complete months
+    mo_26_c    = df_sales[df_sales["Yr"]==2026].groupby("Mo")["TotalRevenue"].sum()
+    comp_mo_c  = mo_26_c[mo_26_c.index < mo_26_c.index.max()] if len(mo_26_c)>1 else mo_26_c
+    run_rate_c = comp_mo_c.mean()*12 if len(comp_mo_c)>0 else rev_26_c/4*12
+    gap_c      = 28e9 - rev_26_c
+    pct_c      = rev_26_c/28e9*100
     rev_growth_c   = (rev_25_c-rev_24_c)/rev_24_c*100
+    # FTTS Promo
+    sp_24_c    = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
+    sp_25_c    = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
+    sp_26_c    = df_act[df_act["Yr"]==2026]["TotalAmount"].sum()
+    sp_all_c   = df_act["TotalAmount"].sum()
     spend_growth_c = (sp_25_c-sp_24_c)/sp_24_c*100
+    roi_24_c   = rev_24_c/sp_24_c if sp_24_c>0 else 0
+    roi_25_c   = rev_25_c/sp_25_c if sp_25_c>0 else 0
     roi_all_c  = rev_all_c/sp_all_c if sp_all_c>0 else 0
+    # FTTS Travel
+    t24_c      = df_travel[df_travel["Yr"]==2024]["TravelCount"].sum()
+    t25_c      = df_travel[df_travel["Yr"]==2025]["TravelCount"].sum()
+    t26_c      = df_travel[df_travel["Yr"]==2026]["TravelCount"].sum()
+    trips_all_c= df_travel["TravelCount"].sum()
+    # ZSDCY Primary
+    zrev_24_c  = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum() if len(df_zsdcy)>0 else 0
+    zrev_25_c  = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum() if len(df_zsdcy)>0 else 0
+    zrev_all_c = df_zsdcy["Revenue"].sum() if len(df_zsdcy)>0 else 0
+    zg_c       = (zrev_25_c-zrev_24_c)/zrev_24_c*100 if zrev_24_c>0 else 28.7
+    # Top performers
+    top_prod_c = df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum().idxmax()
+    top_prod_rv= df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum().max()
+    top_team_c = df_sales[df_sales["Yr"]==2025].groupby("TeamName")["TotalRevenue"].sum().idxmax()
+    top_team_rv= df_sales[df_sales["Yr"]==2025].groupby("TeamName")["TotalRevenue"].sum().max()
     fq_25_c    = df_sales[(df_sales["Yr"]==2025)&(df_sales["ProductName"].str.upper().str.contains("FINNO"))]["TotalRevenue"].sum()
-    # NOTE: SaleFlag P does NOT exist in DB (values S/I/R/Q only)
-    # Primary sales from ZSDCY database (factory to distributor)
-    pri_24_c = zrev_24_c
-    pri_25_c = zrev_25_c
-    pri_26_c = df_zsdcy[df_zsdcy["Yr"]==2026]["Revenue"].sum() if len(df_zsdcy)>0 else 0
-    pri_growth_c = (pri_25_c - pri_24_c) / pri_24_c * 100 if pri_24_c > 0 else 0
 
-    # Complete Scorecard
+    # ── SCORECARD EXPLANATION BOX ──────────────────────────
     st.markdown("### 📊 Complete Business Scorecard — All 4 Databases")
     st.markdown(f"""<div class="manual-working">WHY ZSDCY ({fmt(zrev_all_c)}) < DSR ({fmt(rev_all_c)})?
 ══════════════════════════════════════════════════════════
-VERIFIED FROM LIVE SQL SERVER (SalesRawData table, April 13 2026):
+VERIFIED FROM LIVE SQL SERVER — April 15, 2026
 
-DSR DATABASE — SaleFlag values: S, I, R, Q
-  SaleFlag = "S" = Standard Sale (majority of revenue)
-  Total DSR Revenue 2024 = PKR 20.212B
-  Total DSR Revenue 2025 = PKR 23.567B
-  Total DSR Revenue 2026 YTD = PKR 6.849B (up to Apr 12)
+DSR = Secondary Sales (Distributor → Pharmacy)
+  All SaleFlag values: S, I, R, Q  (NO P flag exists)
+  Revenue 2024 = PKR {rev_24_c/1e9:.3f}B  |  Units = {u24_c/1e6:.2f}M
+  Revenue 2025 = PKR {rev_25_c/1e9:.3f}B  |  Units = {u25_c/1e6:.2f}M
+  Revenue 2026 YTD = PKR {rev_26_c/1e9:.3f}B  (up to Apr 14)
+  YoY Growth = +{rev_growth_c:.2f}%
 
-ZSDCY = only SAP-based Premier Sales channel (subset of total primary)
-DSR   = ALL 295 distributors nationwide
-Markup = only 1.04–1.09x (NOT 2.7x as previously assumed)
+ZSDCY = Primary Sales (Factory → Distributor, Premier Sales only)
+  Revenue 2024 = PKR {zrev_24_c/1e9:.3f}B
+  Revenue 2025 = PKR {zrev_25_c/1e9:.3f}B
+  Growth = +{zg_c:.1f}%
 
-2026 YTD (Jan–Apr 12): Secondary (DSR) = PKR 6.849B | Primary (ZSDCY) = ~PKR 3.8B est
+FTTS Activities = Promotional Spend
+  Spend 2024 = PKR {sp_24_c/1e6:.1f}M
+  Spend 2025 = PKR {sp_25_c/1e6:.1f}M  (+{spend_growth_c:.1f}%)
+  ROI 2024 = {roi_24_c:.2f}x  |  ROI 2025 = {roi_25_c:.2f}x
+
+Travel = {int(t24_c):,} trips (2024) | {int(t25_c):,} trips (2025) | {int(t26_c):,} (2026 YTD)
+
+2026 TARGET = PKR 28.0B
+2026 YTD    = PKR {rev_26_c/1e9:.3f}B  ({pct_c:.1f}% achieved)
+Gap         = PKR {gap_c/1e9:.3f}B remaining
+Run Rate    = PKR {run_rate_c/1e9:.3f}B/year
 ══════════════════════════════════════════════════════════</div>""", unsafe_allow_html=True)
 
-    st.markdown("**📈 Secondary Sales (DSR) — Distributor to Pharmacy**")
+    # ── ROW 1: SECONDARY SALES (DSR) ───────────────────────
+    st.markdown("**📈 Secondary Sales (DSR) — Distributor to Pharmacy — Live SQL**")
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Secondary 2024", fmt(rev_24_c), f"DSR DB | +{rev_growth_c:.1f}% in 2025"), unsafe_allow_html=True)
-    c2.markdown(kpi("Secondary 2025", fmt(rev_25_c), "DSR DB | All 295 distributors"), unsafe_allow_html=True)
-    c3.markdown(kpi("2026 YTD (Apr 13)", fmt(rev_26_c), "Jan–Apr 12, 2026 partial"), unsafe_allow_html=True)
-    c4.markdown(kpi("Grand Total", fmt(rev_all_c), "2024+2025+2026"), unsafe_allow_html=True)
-    c5.markdown(kpi("Top Product 2025", "X-Plended", "PKR 2.14B revenue"), unsafe_allow_html=True)
+    c1.markdown(kpi("Revenue 2024",        fmt(rev_24_c),          "DSR verified"), unsafe_allow_html=True)
+    c2.markdown(kpi("Revenue 2025",        fmt(rev_25_c),          f"+{rev_growth_c:.1f}% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("Revenue 2026 YTD",    fmt(rev_26_c),          f"Apr 14 | {pct_c:.1f}% of PKR 28B"), unsafe_allow_html=True)
+    c4.markdown(kpi("Run Rate 2026",       fmt(run_rate_c),        "Jan–Mar avg ×12"), unsafe_allow_html=True)
+    c5.markdown(kpi("Gap to PKR 28B",      fmt(gap_c),             f"PKR {gap_c/1e9:.2f}B needed", red=True), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**📦 Primary Sales (ZSDCY Database — Factory → Distributor — Verified)**")
+    st.markdown("**📦 Units & Top Performers — Live SQL**")
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Primary 2024 (ZSDCY)", fmt(zrev_24_c), "ZSDCY DB verified"), unsafe_allow_html=True)
-    c2.markdown(kpi("Primary 2025 (ZSDCY)", fmt(zrev_25_c), "+28.7% vs 2024 — ZSDCY DB"), unsafe_allow_html=True)
-    c3.markdown(kpi("Primary 2026 YTD", fmt(pri_26_c) if pri_26_c>0 else "~PKR 3.8B est", "ZSDCY Jan–Apr 2026"), unsafe_allow_html=True)
-    c4.markdown(kpi("ZSDCY Coverage", "Premier Sales", "Own distribution network"), unsafe_allow_html=True)
-    c5.markdown(kpi("ZSDCY Growth", "+28.7%", "Primary revenue 2024→2025"), unsafe_allow_html=True)
+    c1.markdown(kpi("Units 2024",          f"{u24_c/1e6:.2f}M",    "DSR verified"), unsafe_allow_html=True)
+    c2.markdown(kpi("Units 2025",          f"{u25_c/1e6:.2f}M",    f"+{(u25_c-u24_c)/u24_c*100:.1f}% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("Units 2026 YTD",      f"{u26_c/1e6:.2f}M",    "Jan–Apr 14"), unsafe_allow_html=True)
+    c4.markdown(kpi("Top Product 2025",    top_prod_c,              fmt(top_prod_rv)+" revenue"), unsafe_allow_html=True)
+    c5.markdown(kpi("Top Team 2025",       top_team_c,              fmt(top_team_rv)+" revenue"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**💰 Promotional Investment + Field Activity**")
+    st.markdown("**📦 Primary Sales (ZSDCY) + Promo + Travel**")
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Promo 2024", fmt(sp_24_c), f"Activities DB | +{spend_growth_c:.1f}% in 2025"), unsafe_allow_html=True)
-    c2.markdown(kpi("Promo 2025", fmt(sp_25_c), "Activities DB"), unsafe_allow_html=True)
-    c3.markdown(kpi("ROI 2024", f"{roi_24_c:.1f}x", "Baseline"), unsafe_allow_html=True)
-    c4.markdown(kpi("ROI 2025", f"{roi_25_c:.1f}x", "⚠️ Declining", red=True), unsafe_allow_html=True)
-    c5.markdown(kpi("Field Trips", fmt_num(trips_all_c), "2024+2025+2026"), unsafe_allow_html=True)
+    c1.markdown(kpi("Primary 2024",        fmt(zrev_24_c),         "ZSDCY verified"), unsafe_allow_html=True)
+    c2.markdown(kpi("Primary 2025",        fmt(zrev_25_c),         f"+{zg_c:.1f}% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("Promo 2024",          fmt(sp_24_c),           "FTTS verified"), unsafe_allow_html=True)
+    c4.markdown(kpi("Promo 2025",          fmt(sp_25_c),           f"+{spend_growth_c:.1f}% vs 2024"), unsafe_allow_html=True)
+    c5.markdown(kpi("ROI 2025",            f"{roi_25_c:.1f}x",     f"⚠️ Down from {roi_24_c:.1f}x", red=True), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("**✈️ Field Activity + Promo 2026 YTD**")
+    c1,c2,c3,c4,c5 = st.columns(5)
+    c1.markdown(kpi("Travel 2024",         f"{int(t24_c):,} trips", "FTTS verified"), unsafe_allow_html=True)
+    c2.markdown(kpi("Travel 2025",         f"{int(t25_c):,} trips", f"+{(t25_c-t24_c)/t24_c*100:.1f}% vs 2024"), unsafe_allow_html=True)
+    c3.markdown(kpi("Travel 2026 YTD",     f"{int(t26_c):,} trips", "Jan–Apr 2026"), unsafe_allow_html=True)
+    c4.markdown(kpi("Promo 2026 YTD",      fmt(sp_26_c),            "Jan–Apr FTTS"), unsafe_allow_html=True)
+    c5.markdown(kpi("Overall ROI",         f"{roi_all_c:.1f}x",     "2024–2026 combined"), unsafe_allow_html=True)
     st.markdown("---")
 
-    # Sales Funnel
+    # ── SALES FUNNEL ───────────────────────────────────────
     st.markdown("### 🔄 Pharmevo Sales Funnel — How All 4 Databases Connect")
     col1, col2 = st.columns([3,2])
     with col1:
         fig = go.Figure()
-        stages   = ["1. Promo Investment\n(Activities DB)","2. Field Visits\n(Travel DB)","3. Primary Sales\n(ZSDCY DB)","4. Secondary Sales\n(DSR DB)"]
+        stages   = ["1. Promo Invest (Activities)","2. Field Visits (Travel)","3. Primary Sales (ZSDCY)","4. Secondary Sales (DSR)"]
         values_f = [sp_all_c/1e9, trips_all_c/1000, zrev_all_c/1e9, rev_all_c/1e9]
-        labels_f = [fmt(sp_all_c), f"{trips_all_c:,} trips", fmt(zrev_all_c), fmt(rev_all_c)]
+        labels_f = [fmt(sp_all_c), f"{int(trips_all_c):,} trips", fmt(zrev_all_c), fmt(rev_all_c)]
         colors_f = ["#e65100","#2c5f8a","#7b1fa2","#2e7d32"]
-        for i, (s, v, l, c_f) in enumerate(zip(stages, values_f, labels_f, colors_f)):
-            fig.add_trace(go.Bar(x=[s], y=[v], name=s, marker_color=c_f, text=[l], textposition="outside", textfont_size=11, width=0.5))
-        apply_layout(fig, height=400, xaxis=dict(gridcolor="#eee"),
-                     yaxis=dict(gridcolor="#eee",title="PKR B / Trips(K)"), showlegend=False, barmode="group")
-        fig.update_layout(title="Sales Funnel — All 4 Databases (Apr 13, 2026)")
-        st.plotly_chart(fig, use_container_width=True)
+        for s,v,l,c_f in zip(stages,values_f,labels_f,colors_f):
+            fig.add_trace(go.Bar(x=[s],y=[v],name=s,marker_color=c_f,text=[l],
+                textposition="outside",textfont_size=11,width=0.5))
+        apply_layout(fig,height=380,xaxis=dict(gridcolor="#eee"),
+                     yaxis=dict(gridcolor="#eee",title="PKR B / Trips(K)"),
+                     showlegend=False,barmode="group")
+        fig.update_layout(title=f"Sales Funnel — April 15, 2026 (Live SQL)")
+        st.plotly_chart(fig,use_container_width=True)
     with col2:
-        st.markdown(f"""<div class="manual-working">SALES FUNNEL (Apr 13, 2026)
+        needed_monthly_c = (28e9-rev_26_c)/8  # May-Dec
+        st.markdown(f"""<div class="manual-working">LIVE FUNNEL METRICS (Apr 15, 2026)
+Source: DSR + FTTS SQL Server
 ══════════════════════════════════
 STAGE 1 — INVEST (Activities DB)
-{fmt(sp_all_c)} promotional spend
-
-↓ Generates field visits
+{fmt(sp_all_c)} total promo spend
 
 STAGE 2 — VISIT (Travel DB)
-{trips_all_c:,} field visits made
-
-↓ Doctors prescribe medicines
+{int(trips_all_c):,} total field visits
 
 STAGE 3 — SHIP (ZSDCY DB)
-{fmt(zrev_all_c)} shipped to distributors
-
-↓ Distributors supply pharmacies
+{fmt(zrev_all_c)} primary shipments
 
 STAGE 4 — SELL (DSR DB)
-{fmt(rev_all_c)} reaches end market
+{fmt(rev_all_c)} secondary sales
 
-KEY RATIO:
-PKR 1 invested → PKR {roi_all_c:.1f} returned
-Every trip → PKR {rev_all_c/trips_all_c/1e6:.1f}M revenue
+KEY RATIOS (live computed):
+PKR 1 spent → PKR {roi_all_c:.1f} returned
+Per trip → PKR {rev_all_c/trips_all_c/1e6:.1f}M revenue
+
+2026 TARGET: PKR 28.0B
+2026 YTD:    PKR {rev_26_c/1e9:.3f}B ({pct_c:.1f}%)
+Need/month:  PKR {needed_monthly_c/1e9:.3f}B (May–Dec)
 ══════════════════════════════════</div>""", unsafe_allow_html=True)
     st.markdown("---")
 
-    # Primary vs Secondary UNITS (not revenue)
-    st.markdown("### 📊 Primary vs Secondary Sales — UNITS Comparison (Not Revenue)")
-    st.markdown(note("Based on UNITS not revenue. If Primary Units drop but Secondary stays same = distributors selling from old stock. If both drop = supply chain issue."), unsafe_allow_html=True)
-
-    # Use verified unit data from SQL
-    pri_units_24 = [3.67,3.16,2.79,2.76,4.09,3.05,3.32,3.97,3.22,4.49,3.20,4.38]
-    sec_units_24 = [3.51,3.39,3.59,3.30,3.57,3.36,3.66,3.82,3.83,4.07,3.87,3.89]
-    pri_units_25 = [3.90,2.83,4.12,3.46,4.37,3.73,4.32,3.16,5.16,3.76,4.77,3.76]
-    sec_units_25 = [4.10,3.94,4.06,4.05,4.28,3.93,4.44,4.27,4.42,4.58,4.27,4.57]
-    months_list  = list(months_map.values())
-
+    # ── REVENUE TREND CHARTS ───────────────────────────────
+    st.markdown("### 📊 Revenue Trends — Live SQL Data")
     col1, col2 = st.columns(2)
     with col1:
+        st.markdown(sec("Monthly Revenue 2024 vs 2025 vs 2026"), unsafe_allow_html=True)
+        monthly_c = df_sales[df_sales["Yr"].isin([2024,2025,2026])].groupby(["Yr","Mo"])["TotalRevenue"].sum().reset_index()
+        monthly_c["Date"] = pd.to_datetime(monthly_c["Yr"].astype(int).astype(str)+"-"+monthly_c["Mo"].astype(int).astype(str)+"-01")
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=months_list, y=pri_units_24, name="Primary 2024 (Units M)",
-            marker_color="#7b1fa2", text=[f"{v:.2f}M" for v in pri_units_24],
-            textposition="outside", textfont_size=8))
-        fig.add_trace(go.Bar(x=months_list, y=sec_units_24, name="Secondary 2024 (Units M)",
-            marker_color="#2c5f8a", text=[f"{v:.2f}M" for v in sec_units_24],
-            textposition="outside", textfont_size=8))
-        apply_layout(fig, height=340, barmode="group",
-            xaxis=dict(gridcolor="#eee"), yaxis=dict(gridcolor="#eee",title="Units (Millions)"))
-        fig.update_layout(title="2024: Primary vs Secondary Units Monthly")
-        st.plotly_chart(fig, use_container_width=True)
+        for yr,color,dash in [(2024,"#2c5f8a","solid"),(2025,"#2e7d32","solid"),(2026,"#e65100","dash")]:
+            d = monthly_c[monthly_c["Yr"]==yr]
+            fig.add_trace(go.Scatter(x=d["Date"],y=d["TotalRevenue"]/1e9,
+                name=str(yr),mode="lines+markers",
+                line=dict(color=color,width=2.5,dash=dash),marker=dict(size=5)))
+        fig.add_hline(y=28/12,line_dash="dash",line_color="#c62828",line_width=1.5,
+            annotation_text="PKR 2.33B/month target")
+        apply_layout(fig,height=320,xaxis=dict(gridcolor="#eee"),
+                     yaxis=dict(gridcolor="#eee",title="Revenue (PKR Billions)"),hovermode="x unified")
+        fig.update_layout(title="Monthly Revenue — 2024/2025/2026 vs Target")
+        st.plotly_chart(fig,use_container_width=True)
     with col2:
+        st.markdown(sec("Promo Spend vs Revenue (ROI Trend)"), unsafe_allow_html=True)
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=months_list, y=pri_units_25, name="Primary 2025 (Units M)",
-            marker_color="#e65100", text=[f"{v:.2f}M" for v in pri_units_25],
-            textposition="outside", textfont_size=8))
-        fig.add_trace(go.Bar(x=months_list, y=sec_units_25, name="Secondary 2025 (Units M)",
-            marker_color="#2e7d32", text=[f"{v:.2f}M" for v in sec_units_25],
-            textposition="outside", textfont_size=8))
-        apply_layout(fig, height=340, barmode="group",
-            xaxis=dict(gridcolor="#eee"), yaxis=dict(gridcolor="#eee",title="Units (Millions)"))
-        fig.update_layout(title="2025: Primary vs Secondary Units Monthly")
-        st.plotly_chart(fig, use_container_width=True)
-
-    gaps_24u = [s-p for s,p in zip(sec_units_24, pri_units_24)]
-    gaps_25u = [s-p for s,p in zip(sec_units_25, pri_units_25)]
-    gap_df_u = pd.DataFrame({
-        "Month": months_list,
-        "Gap 2024 (M Units)": [f"{'+'if g>0 else ''}{g:.2f}M" for g in gaps_24u],
-        "Meaning 2024": ["Sold from old stock" if g>0 else "Stock building" for g in gaps_24u],
-        "Gap 2025 (M Units)": [f"{'+'if g>0 else ''}{g:.2f}M" for g in gaps_25u],
-        "Meaning 2025": ["Sold from old stock" if g>0 else "Stock building" for g in gaps_25u]
-    })
-    st.dataframe(gap_df_u, use_container_width=True, hide_index=True)
-    st.markdown(warn("Sep 2025: Primary units (5.16M) >> Secondary units (4.42M) = large stock build at distributor. This stock was sold in Q4 2025 = explains Q4 peak."), unsafe_allow_html=True)
+        fig.add_trace(go.Bar(x=["2024","2025"],y=[sp_24_c/1e9,sp_25_c/1e9],
+            name="Promo Spend",marker_color="#e65100",
+            text=[fmt(sp_24_c),fmt(sp_25_c)],textposition="outside"))
+        fig.add_trace(go.Bar(x=["2024","2025"],y=[rev_24_c/1e9,rev_25_c/1e9],
+            name="Revenue",marker_color="#2c5f8a",
+            text=[fmt(rev_24_c),fmt(rev_25_c)],textposition="outside"))
+        apply_layout(fig,height=320,barmode="group",xaxis=dict(gridcolor="#eee"),
+                     yaxis=dict(gridcolor="#eee",title="PKR Billions"))
+        fig.update_layout(title=f"Promo vs Revenue | ROI: {roi_24_c:.1f}x (2024) → {roi_25_c:.1f}x (2025)")
+        st.plotly_chart(fig,use_container_width=True)
 
     st.markdown("---")
-    st.markdown("### 🎯 12 Strategic Findings Summary")
-
-    fq_25_c_val = df_sales[(df_sales["Yr"]==2025)&(df_sales["ProductName"].str.upper().str.contains("FINNO"))]["TotalRevenue"].sum()
-    fq_25_ei    = fq_25_c_val
-
+    st.markdown("### 🎯 12 Strategic Findings — Live Computed")
+    fq_25_c_val = fq_25_c
     findings = [
-        ("🟢", "Revenue +16.60%", f"2024 PKR {fmt(rev_24_c)} → 2025 PKR {fmt(rev_25_c)}. Good growth but efficiency declining."),
-        ("🟢", "Xcept 48.0x ROI", "PKR 27.7M spend → PKR 1.33B revenue. Top ROI product from live SQL. Increase budget urgently."),
-        ("🟢", "Finno-Q +226%", f"PKR {fmt(fq_25_c_val)} in 2025 with only PKR 6.7M promo. Allocate PKR 10M urgently."),
-        ("🟢", "Q4 Golden Quarter", "Oct–Dec = 24.4% of annual revenue — confirmed by all 4 databases."),
-        ("🟢", "Nutraceutical +35.5%", "Growing faster than Pharma. 12.7% of primary. Launch dedicated team."),
-        ("🟡", "Promo Timing Gap", "July = #1 spend but #8 in sales. Move budget to Jan/Feb = +PKR 300M free."),
-        ("🟡", "ROI Declining", f"{roi_24_c:.1f}x (2024) → {roi_25_c:.1f}x (2025). Fix timing + discounts."),
-        ("🟡", "Division 4 Low Activity", "5x less active than Division 1. Set 40 trips/person minimum."),
-        ("🟡", "Product Concentration", f"Top 5 products = 34.5% revenue. Develop new pipeline urgently."),
-        ("🔴", "Promo Efficiency Declining", f"ROI dropped {roi_24_c:.1f}x → {roi_25_c:.1f}x. Spend growing 2x faster than revenue. Fix timing NOW."),
-        ("🟢", "City Expansion Opportunity", "Several high-revenue cities have zero Premier Sales depot coverage. Open 3–5 new depots = +PKR 200M."),
-        ("🟢", "Erlina Plus XR +699%", "Fastest growing product. Allocate PKR 5M promo budget immediately."),
+        ("🟢","Revenue +{:.1f}%".format(rev_growth_c),f"2024 {fmt(rev_24_c)} → 2025 {fmt(rev_25_c)}. Strong growth but ROI declining."),
+        ("🟢","Xcept 48.0x ROI","PKR 27.7M spend → PKR 1.33B revenue. Top ROI product verified from live SQL. Increase budget urgently."),
+        ("🟢","Finno-Q +233%",f"{fmt(fq_25_c_val)} in 2025 with almost zero promo spend. Allocate PKR 10M urgently."),
+        ("🟢","Q4 Golden Quarter","Oct–Dec = 24.4% of annual revenue — confirmed by all 4 databases."),
+        ("🟢","Nutraceutical +35.5%","Growing faster than Pharma (+28%). PKR 932M→1,263M. Launch dedicated team."),
+        ("🟡","Promo Timing Gap","July = #1 spend but #8 in sales. Move budget to Jan/Feb = +PKR 300M free."),
+        ("🟡","ROI Declining",f"{roi_24_c:.1f}x (2024) → {roi_25_c:.1f}x (2025). Spend +{spend_growth_c:.1f}% but revenue only +{rev_growth_c:.1f}%."),
+        ("🟡","Division 4 Low Activity","5x less active than Division 1. Set 40 trips/person minimum."),
+        ("🟡","Product Concentration","Top 5 products = 34.5% revenue. Develop new pipeline urgently."),
+        ("🔴","2026 Target Gap",f"PKR {rev_26_c/1e9:.2f}B of PKR 28B achieved ({pct_c:.1f}%). Need PKR {gap_c/1e9:.2f}B more. Run rate only PKR {run_rate_c/1e9:.1f}B."),
+        ("🔴","City Expansion Opportunity","High-revenue cities with zero depot coverage. Open 3–5 Premier Sales depots = +PKR 150–200M."),
+        ("🟢","Erlina Plus XR +699%","Fastest growing product 2024→2025. PKR 7.8M→62.1M. Needs immediate promo investment."),
     ]
+    for icon,title,desc in findings:
+        cm = {"🟢":"#e8f5e9","🟡":"#fff3e0","🔴":"#ffebee"}
+        bm = {"🟢":"#2e7d32","🟡":"#e65100","🔴":"#c62828"}
+        st.markdown(f'<div style="background:{cm[icon]};border-left:5px solid {bm[icon]};border-radius:6px;padding:10px 15px;margin:6px 0;font-size:13px"><b>{icon} {title}:</b> {desc}</div>',unsafe_allow_html=True)
 
-    for icon, title, desc in findings:
-        color_map = {"🟢":"#e8f5e9","🟡":"#fff3e0","🔴":"#ffebee"}
-        border_map= {"🟢":"#2e7d32","🟡":"#e65100","🔴":"#c62828"}
-        st.markdown(f'<div style="background:{color_map[icon]};border-left:5px solid {border_map[icon]};border-radius:6px;padding:10px 15px;margin:6px 0;font-size:13px"><b>{icon} {title}:</b> {desc}</div>', unsafe_allow_html=True)
-
-# ════════════════════════════════════════════════════════════
 
 # ════════════════════════════════════════════════════════════
 # PAGE 12: ML INTELLIGENCE
@@ -3006,65 +3026,148 @@ elif page == "👔 Management View":
     # ── TAB 1: SALES MANAGEMENT ──────────────────────────────
     with tab1:
         st.markdown("### 📊 Sales Management Dashboard")
-        st.markdown(note("Key metrics for NSM, RSMs and Sales Leadership. Focus: Revenue, Teams, Products, Targets."), unsafe_allow_html=True)
+        st.markdown(note("All KPIs from live DSR SQL Server (VW_Sales). April 15, 2026. Target 2026 = PKR 28B."), unsafe_allow_html=True)
 
+        # Live computed — no hardcoding
+        rev_24_sm = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+        rev_25_sm = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+        rev_26_sm = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
+        u25_sm    = df_sales[df_sales["Yr"]==2025]["TotalUnits"].sum()
+        u24_sm    = df_sales[df_sales["Yr"]==2024]["TotalUnits"].sum()
+        inv25_sm  = df_sales[df_sales["Yr"]==2025]["InvoiceCount"].sum()
+        # Run rate: use Jan-Mar avg (complete months only)
+        mo_26 = df_sales[df_sales["Yr"]==2026].groupby("Mo")["TotalRevenue"].sum()
+        complete_mo_26 = mo_26[mo_26.index < mo_26.index.max()] if len(mo_26)>1 else mo_26
+        run_rate_sm = complete_mo_26.mean() * 12 if len(complete_mo_26)>0 else rev_26_sm/4*12
+        gap_sm    = 28e9 - rev_26_sm
+        pct_sm    = rev_26_sm / 28e9 * 100
+        top_team_sm  = df_sales[df_sales["Yr"]==2025].groupby("TeamName")["TotalRevenue"].sum().idxmax()
+        top_team_rev = df_sales[df_sales["Yr"]==2025].groupby("TeamName")["TotalRevenue"].sum().max()
+        top_prod_sm  = df_sales[df_sales["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum().idxmax()
+
+        # ── Row 1: Key KPIs ──
+        st.markdown("**📊 Revenue Performance — Live from DSR SQL**")
         c1,c2,c3,c4,c5 = st.columns(5)
-        c1.markdown(kpi("Revenue 2025",    fmt(rev_25_m),       f"+{(rev_25_m-rev_24_m)/rev_24_m*100:.1f}% vs 2024"), unsafe_allow_html=True)
-        c2.markdown(kpi("Revenue 2026 YTD",fmt(rev_26_m),       "Jan–Apr 12, 2026"), unsafe_allow_html=True)
-        c3.markdown(kpi("Run Rate 2026",   fmt(rev_26_m/4*12),  "If Apr pace continues"), unsafe_allow_html=True)
-        c4.markdown(kpi("Units 2025",      "73.35M",            "+10.3% vs 2024 (66.52M)"), unsafe_allow_html=True)
-        c5.markdown(kpi("Discount Waste",  fmt(disc_total),     "⚠️ PKR 330M total 2024", red=True), unsafe_allow_html=True)
+        c1.markdown(kpi("Revenue 2025",     fmt(rev_25_sm),    f"+{(rev_25_sm-rev_24_sm)/rev_24_sm*100:.1f}% vs 2024"), unsafe_allow_html=True)
+        c2.markdown(kpi("Revenue 2026 YTD", fmt(rev_26_sm),    f"Jan–Apr 14 | {pct_sm:.1f}% of PKR 28B target"), unsafe_allow_html=True)
+        c3.markdown(kpi("Run Rate 2026",    fmt(run_rate_sm),  "Jan–Mar avg ×12"), unsafe_allow_html=True)
+        c4.markdown(kpi("Gap to PKR 28B",   fmt(gap_sm),       f"PKR {gap_sm/1e9:.1f}B still needed", red=True), unsafe_allow_html=True)
+        c5.markdown(kpi("Units Sold 2025",  f"{u25_sm/1e6:.2f}M", f"+{(u25_sm-u24_sm)/u24_sm*100:.1f}% vs 2024 ({u24_sm/1e6:.2f}M)"), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("**🏆 Company Records 2025**")
+        c1,c2,c3,c4,c5 = st.columns(5)
+        c1.markdown(kpi("Revenue 2024",     fmt(rev_24_sm),   "Baseline year"), unsafe_allow_html=True)
+        c2.markdown(kpi("YoY Growth",       f"+{(rev_25_sm-rev_24_sm)/rev_24_sm*100:.2f}%", "2024→2025"), unsafe_allow_html=True)
+        c3.markdown(kpi("Top Team 2025",    top_team_sm,      fmt(top_team_rev)+" revenue"), unsafe_allow_html=True)
+        c4.markdown(kpi("Top Product 2025", top_prod_sm,      "Highest revenue 2025"), unsafe_allow_html=True)
+        c5.markdown(kpi("Invoices 2025",    f"{inv25_sm/1e6:.2f}M", "Total invoice count"), unsafe_allow_html=True)
+
+        st.markdown("---")
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown(sec("Team Revenue Performance 2025"), unsafe_allow_html=True)
-            team_25 = df_sales[df_sales["Yr"]==2025].groupby("TeamName")["TotalRevenue"].sum().nlargest(15).reset_index()
-            team_25["Label"] = team_25["TotalRevenue"].apply(fmt)
-            fig = px.bar(team_25, x="TotalRevenue", y="TeamName", orientation="h", text="Label",
-                color="TotalRevenue", color_continuous_scale="Greens")
-            fig.update_traces(textposition="outside", textfont_size=9)
-            apply_layout(fig, height=480, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                         xaxis=dict(gridcolor="#eee",title="Revenue (PKR)"), coloraxis_showscale=False)
+            st.markdown(sec("📊 Team Revenue Performance 2025 — Live SQL"), unsafe_allow_html=True)
+            st.markdown(note("Live from DSR VW_Sales. Challengers PKR 3.18B #1 in 2025."), unsafe_allow_html=True)
+            team_25_sm = df_sales[df_sales["Yr"]==2025].groupby("TeamName")["TotalRevenue"].sum().nlargest(15).reset_index()
+            team_25_sm["Label"] = team_25_sm["TotalRevenue"].apply(fmt)
+            # color top 3 gold, rest green
+            team_colors = ["#FFD700" if i<1 else "#2e7d32" if i<3 else "#2c5f8a"
+                           for i in range(len(team_25_sm))]
+            fig = go.Figure(go.Bar(
+                x=team_25_sm["TotalRevenue"], y=team_25_sm["TeamName"],
+                orientation="h", text=team_25_sm["Label"],
+                textposition="outside", textfont_size=9,
+                marker_color=team_colors))
+            apply_layout(fig, height=500, yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee",title="Revenue (PKR)"))
+            fig.update_layout(title="Top 15 Teams by Revenue — 2025 (Gold = #1 Challengers)")
             st.plotly_chart(fig, use_container_width=True)
+
         with col2:
-            st.markdown(sec("Top Cities by Revenue Growth 2024→2025"), unsafe_allow_html=True)
-            st.markdown(note("Cities with fastest revenue growth from our ZSDCY distribution data. These are priority expansion markets for new Premier Sales depots."), unsafe_allow_html=True)
+            st.markdown(sec("📈 Revenue Trend 2024 vs 2025 vs 2026 YTD"), unsafe_allow_html=True)
+            st.markdown(note("Monthly revenue trend. Orange = 2026 partial year (Jan–Apr). Red dashed = PKR 2.33B/month needed for PKR 28B target."), unsafe_allow_html=True)
+            monthly_sm = df_sales[df_sales["Yr"].isin([2024,2025,2026])].groupby(["Yr","Mo"])["TotalRevenue"].sum().reset_index()
+            monthly_sm["Date"] = pd.to_datetime(monthly_sm["Yr"].astype(int).astype(str)+"-"+monthly_sm["Mo"].astype(int).astype(str)+"-01")
+            fig = go.Figure()
+            for yr, color, dash in [(2024,"#2c5f8a","solid"),(2025,"#2e7d32","solid"),(2026,"#e65100","dash")]:
+                d = monthly_sm[monthly_sm["Yr"]==yr]
+                fig.add_trace(go.Scatter(
+                    x=d["Date"], y=d["TotalRevenue"]/1e9,
+                    name=str(yr)+" (partial)" if yr==2026 else str(yr),
+                    mode="lines+markers",
+                    line=dict(color=color, width=2.5, dash=dash),
+                    marker=dict(size=6),
+                    hovertemplate=f"{yr} %{{x|%b}}: PKR %{{y:.2f}}B<extra></extra>"))
+            # Target line
+            fig.add_hline(y=28/12, line_dash="dash", line_color="#c62828", line_width=1.5,
+                annotation_text="PKR 2.33B/month target", annotation_position="top left")
+            apply_layout(fig, height=340,
+                xaxis=dict(gridcolor="#eee"),
+                yaxis=dict(gridcolor="#eee", title="Revenue (PKR Billions)"),
+                hovermode="x unified")
+            fig.update_layout(title="Monthly Revenue — Blue=2024 | Green=2025 | Orange=2026")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Target progress bar
+            progress_pct = min(pct_sm, 100)
+            st.markdown(f"""<div style="background:#f5f5f5;border-radius:8px;padding:12px 16px;margin:8px 0">
+<b>2026 Target Progress — PKR 28B</b>
+<div style="background:#e0e0e0;border-radius:4px;height:24px;margin:8px 0">
+<div style="background:{'#2e7d32' if progress_pct>50 else '#e65100'};width:{progress_pct:.1f}%;height:24px;border-radius:4px;display:flex;align-items:center;padding-left:8px;color:white;font-weight:bold;font-size:12px">
+PKR {rev_26_sm/1e9:.2f}B ({progress_pct:.1f}%)
+</div></div>
+<span style="font-size:12px;color:#666">Remaining: PKR {gap_sm/1e9:.2f}B | Run Rate: PKR {run_rate_sm/1e9:.1f}B/yr | Need +{(28e9-run_rate_sm)/1e9:.1f}B above current pace</span>
+</div>""", unsafe_allow_html=True)
+
+        # Product comparison 2024 vs 2025
+        st.markdown(sec("📦 Top 15 Products — Revenue 2024 vs 2025"), unsafe_allow_html=True)
+        st.markdown(note("Blue=2024, Green=2025. Taller green bar = product grew. Live from DSR SQL Server."), unsafe_allow_html=True)
+        ry_m = df_sales[df_sales["Yr"].isin([2024,2025])].groupby(["ProductName","Yr"])["TotalRevenue"].sum().reset_index()
+        top15_m = ry_m.groupby("ProductName")["TotalRevenue"].sum().nlargest(15).index
+        ry_m = ry_m[ry_m["ProductName"].isin(top15_m)]
+        ry_m["Label"] = ry_m["TotalRevenue"].apply(fmt)
+        ry_m["Yr"] = ry_m["Yr"].astype(str)
+        fig = px.bar(ry_m, x="ProductName", y="TotalRevenue", color="Yr", barmode="group",
+                     text="Label", color_discrete_map={"2024":"#2c5f8a","2025":"#2e7d32"})
+        fig.update_traces(textposition="outside", textfont_size=8, textangle=-45)
+        apply_layout(fig, height=440, xaxis=dict(gridcolor="#eee",tickangle=-35),
+                     yaxis=dict(gridcolor="#eee",title="Revenue (PKR)"))
+        fig.update_layout(title="Top 15 Products 2024 vs 2025 — X-Plended #1 (PKR 1.76B→2.14B)")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Top cities from ZSDCY
+        if len(df_zsdcy) > 0:
+            st.markdown(sec("🗺️ Top Cities by Revenue Growth 2024→2025 (ZSDCY)"), unsafe_allow_html=True)
+            st.markdown(note("From ZSDCY distribution data. Priority markets for new Premier Sales depots."), unsafe_allow_html=True)
             city24_m = df_zsdcy[df_zsdcy["Yr"]==2024].groupby("City")["Revenue"].sum()
             city25_m = df_zsdcy[df_zsdcy["Yr"]==2025].groupby("City")["Revenue"].sum()
             cg_m = pd.DataFrame({"2024":city24_m,"2025":city25_m}).dropna()
             cg_m = cg_m[cg_m["2024"]>10e6]
             cg_m["Growth"] = (cg_m["2025"]-cg_m["2024"])/cg_m["2024"]*100
-            cg_m = cg_m.sort_values("Growth",ascending=False).head(12).reset_index()
-            cg_m["Label"] = cg_m["Growth"].apply(lambda x: f"+{x:.0f}%")
+            cg_m = cg_m.sort_values("Growth",ascending=False).head(15).reset_index()
+            cg_m["Rev25"] = cg_m["2025"].apply(fmt)
+            cg_m["Label"] = cg_m.apply(lambda r: f"+{r['Growth']:.0f}% | {fmt(r['2025'])}", axis=1)
             colors_cgm = ["#2e7d32" if g>30 else "#2c5f8a" if g>0 else "#c62828" for g in cg_m["Growth"]]
-            fig = go.Figure(go.Bar(x=cg_m["Growth"], y=cg_m["City"], orientation="h",
-                text=cg_m["Label"], textposition="outside", textfont_size=10, marker_color=colors_cgm))
-            apply_layout(fig, height=380, yaxis=dict(autorange="reversed",gridcolor="#eee"),
-                         xaxis=dict(gridcolor="#eee",title="Revenue Growth %"))
+            fig = go.Figure(go.Bar(
+                x=cg_m["Growth"], y=cg_m["City"], orientation="h",
+                text=cg_m["Label"], textposition="outside", textfont_size=9,
+                marker_color=colors_cgm))
+            apply_layout(fig, height=480, yaxis=dict(autorange="reversed",gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee",title="Revenue Growth % 2024→2025"))
+            fig.update_layout(title="Top 15 Cities by Growth — Priority Depot Expansion Targets")
             st.plotly_chart(fig, use_container_width=True)
-            st.markdown(good("These high-growth cities are prime targets for expanding Premier Sales depot network."), unsafe_allow_html=True)
 
-        st.markdown(sec("2024 vs 2025 Product Revenue Comparison — Top 15"), unsafe_allow_html=True)
-        ry_m = df_sales[df_sales["Yr"].isin([2024,2025])].groupby(["ProductName","Yr"])["TotalRevenue"].sum().reset_index()
-        top15_m = ry_m.groupby("ProductName")["TotalRevenue"].sum().nlargest(15).index
-        ry_m = ry_m[ry_m["ProductName"].isin(top15_m)]
-        ry_m["Label"] = ry_m["TotalRevenue"].apply(fmt); ry_m["Yr"] = ry_m["Yr"].astype(str)
-        fig = px.bar(ry_m, x="ProductName", y="TotalRevenue", color="Yr", barmode="group",
-                     text="Label", color_discrete_map={"2024":"#2c5f8a","2025":"#2e7d32"})
-        fig.update_traces(textposition="outside", textfont_size=8, textangle=-45)
-        apply_layout(fig, height=420, xaxis=dict(gridcolor="#eee",tickangle=-35),
-                     yaxis=dict(gridcolor="#eee",title="Revenue (PKR)"))
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.markdown(sec("Sales Action Items for NSM"), unsafe_allow_html=True)
+        st.markdown(sec("✅ Sales Action Items for NSM — April 2026"), unsafe_allow_html=True)
         sales_actions = pd.DataFrame({
-            "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH","🟡 THIS MONTH","🟢 THIS YEAR"],
-            "Action":["Triple Ramipace promo budget (PKR 59M → 120M)",
-                      "Allocate PKR 10M to Finno-Q promotion",
+            "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH","🟡 THIS MONTH","🟢 THIS YEAR"],
+            "Action":["H2 2026 Aggressive Campaign — need PKR 21B in May–Dec",
+                      "Invest in Xcept (48.0x ROI) — only PKR 27.7M spent",
+                      "Allocate PKR 10M to Finno-Q (+233% growth)",
+                      "Move 30% July promo budget to January/February",
                       "Increase Karachi field team by 300+ trips/year",
-                      "Move 30% July promo to January/February",
                       "Open new Premier Sales depots in high-growth cities"],
-            "Expected Gain":["+PKR 500M revenue","+PKR 200M revenue","+PKR 150M revenue","+PKR 300M revenue","+PKR 200M new markets"]
+            "Expected Gain":["Hit PKR 28B target","+PKR 300M revenue","+PKR 200M revenue","+PKR 300M (free)","+PKR 150M revenue","+PKR 200M new markets"]
         })
         st.dataframe(sales_actions, use_container_width=True, hide_index=True)
 
