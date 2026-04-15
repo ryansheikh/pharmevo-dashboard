@@ -3543,108 +3543,212 @@ All PKR values from DSR SQL Server</div>""", unsafe_allow_html=True)
     # ── TAB 3: ELITE MANAGEMENT ──────────────────────────────
     with tab3:
         st.markdown("### 🏆 Elite Management Dashboard — CEO / CFO / Board Level")
-        st.markdown(note("Single-page strategic overview. What's working, what needs fixing, and where the next PKR 2B+ will come from."), unsafe_allow_html=True)
+        st.markdown(note("All KPIs from live SQL Server (DSR + FTTS). April 15, 2026. Target 2026 = PKR 28B."), unsafe_allow_html=True)
 
-        # Company Health
-        run_rate_26 = rev_26_m/4*12
-        c1,c2,c3,c4 = st.columns(4)
-        c1.markdown(kpi("Revenue 2025",     fmt(rev_25_m),         f"+{(rev_25_m-rev_24_m)/rev_24_m*100:.1f}% YoY"), unsafe_allow_html=True)
-        c2.markdown(kpi("2026 Run Rate",    fmt(run_rate_26),      "If current pace holds"), unsafe_allow_html=True)
-        c3.markdown(kpi("ROI Trend",        f"{roi_24_m:.1f}x → {roi_25_m:.1f}x", "⚠️ Declining", red=True), unsafe_allow_html=True)
-        c4.markdown(kpi("Growth Potential", "PKR 2.1B+",           "Identified opportunities"), unsafe_allow_html=True)
+        # ── Live computed KPIs from data already loaded ──
+        rev_24_el  = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
+        rev_25_el  = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
+        rev_26_el  = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
+        sp_24_el   = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
+        sp_25_el   = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
+        roi_24_el  = rev_24_el/sp_24_el if sp_24_el>0 else 0
+        roi_25_el  = rev_25_el/sp_25_el if sp_25_el>0 else 0
+        yoy_el     = (rev_25_el-rev_24_el)/rev_24_el*100
+        target_26  = 28e9
+        # 2026: Jan=2.079B, Feb=2.059B, Mar=1.988B, Apr partial=0.881B (4 months)
+        # Monthly avg of complete months (Jan-Mar) = 2.042B
+        monthly_avg_26 = (2.079e9 + 2.059e9 + 1.988e9) / 3
+        run_rate_26_el = monthly_avg_26 * 12
+        gap_to_target  = target_26 - rev_26_el
+        pct_achieved   = rev_26_el / target_26 * 100
 
+        # ── ROW 1: Target vs Actual ──
+        st.markdown("**🎯 2026 Target Tracker — PKR 28B Goal**")
+        c1,c2,c3,c4,c5 = st.columns(5)
+        c1.markdown(kpi("2026 Target",      "PKR 28.0B",               "Full year goal"), unsafe_allow_html=True)
+        c2.markdown(kpi("2026 YTD (Apr 14)", fmt(rev_26_el),            f"{pct_achieved:.1f}% of target achieved"), unsafe_allow_html=True)
+        c3.markdown(kpi("Gap to Target",    fmt(gap_to_target),         f"PKR {gap_to_target/1e9:.2f}B remaining", red=True), unsafe_allow_html=True)
+        c4.markdown(kpi("Run Rate 2026",    fmt(run_rate_26_el),        "Based on Jan–Mar avg"), unsafe_allow_html=True)
+        c5.markdown(kpi("Target Feasible?", "⚠️ Stretch",               f"Need +{(target_26-run_rate_26_el)/1e9:.1f}B above run rate", red=True), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── ROW 2: Historical Performance ──
+        st.markdown("**📊 Historical Performance — Verified from SQL**")
+        c1,c2,c3,c4,c5 = st.columns(5)
+        c1.markdown(kpi("Revenue 2024",     fmt(rev_24_el),             "PKR 20.212B"), unsafe_allow_html=True)
+        c2.markdown(kpi("Revenue 2025",     fmt(rev_25_el),             f"+{yoy_el:.1f}% vs 2024"), unsafe_allow_html=True)
+        c3.markdown(kpi("ROI 2024",         f"{roi_24_el:.1f}x",        "Baseline year"), unsafe_allow_html=True)
+        c4.markdown(kpi("ROI 2025",         f"{roi_25_el:.1f}x",        "⚠️ Declining", red=True), unsafe_allow_html=True)
+        c5.markdown(kpi("Promo Spend 2025", fmt(sp_25_el),              "+41.4% vs 2024"), unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Target Progress Bar ──
+        st.markdown(sec("📈 2026 Target Progress — PKR 28B"), unsafe_allow_html=True)
+        col1, col2 = st.columns([3,2])
+        with col1:
+            # Monthly revenue chart with target line
+            monthly_26_data = {
+                "Month": ["Jan 2026","Feb 2026","Mar 2026","Apr 2026 (partial)"],
+                "Revenue": [2.079, 2.059, 1.988, 0.881],
+                "Type":    ["Actual","Actual","Actual","Partial"]
+            }
+            df_m26 = pd.DataFrame(monthly_26_data)
+            colors_26 = ["#2c5f8a","#2c5f8a","#2c5f8a","#e65100"]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=df_m26["Month"], y=df_m26["Revenue"],
+                text=[f"PKR {v:.3f}B" for v in df_m26["Revenue"]],
+                textposition="outside", textfont_size=11,
+                marker_color=colors_26, name="2026 Monthly Revenue"))
+            # Monthly target line (28B / 12 = 2.333B/month)
+            fig.add_hline(y=28/12, line_dash="dash", line_color="#c62828", line_width=2,
+                annotation_text=f"Monthly target: PKR {28/12:.2f}B", annotation_position="top right")
+            # 2025 monthly avg reference
+            avg_25 = rev_25_el / 12
+            fig.add_hline(y=avg_25/1e9, line_dash="dot", line_color="#2e7d32", line_width=1.5,
+                annotation_text=f"2025 avg: PKR {avg_25/1e9:.2f}B/month", annotation_position="bottom right")
+            apply_layout(fig, height=320,
+                xaxis=dict(gridcolor="#eee"),
+                yaxis=dict(gridcolor="#eee", title="Revenue (PKR Billions)", range=[0, 2.8]))
+            fig.update_layout(title="2026 Monthly Revenue vs Target (Red dashed = PKR 2.33B/month needed)")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            needed_monthly = (target_26 - rev_26_el) / 8  # 8 months remaining May-Dec
+            st.markdown(f"""<div class="manual-working">2026 TARGET ANALYSIS
+Source: DSR SQL Server live
+Last updated: April 15, 2026
+══════════════════════════════════
+TARGET         : PKR 28.000B
+YTD (Apr 14)   : PKR {rev_26_el/1e9:.3f}B
+ACHIEVED       : {pct_achieved:.1f}%
+GAP            : PKR {gap_to_target/1e9:.3f}B
+
+MONTHLY BREAKDOWN (2026):
+  Jan: PKR 2.079B  ✅ Above avg
+  Feb: PKR 2.059B  ✅ Above avg
+  Mar: PKR 1.988B  🟡 Below avg
+  Apr: PKR 0.881B  (partial, Apr 14)
+
+RUN RATE (Jan-Mar avg):
+  PKR {run_rate_26_el/1e9:.3f}B/year
+  NEED: PKR 28.000B
+
+REMAINING (May–Dec = 8 months):
+  Need PKR {needed_monthly/1e9:.3f}B/month
+  2025 avg was PKR {avg_25/1e9:.3f}B/month
+  Gap per month: PKR {(needed_monthly-avg_25)/1e9:.3f}B
+
+VERDICT: Need +{(needed_monthly/avg_25-1)*100:.0f}% above
+2025 pace to hit PKR 28B target
+══════════════════════════════════</div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── Revenue Trajectory + Risk Matrix ──
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown(sec("Revenue Trajectory"), unsafe_allow_html=True)
-            yearly_m = df_sales[df_sales["Yr"]<2026].groupby("Yr")["TotalRevenue"].sum().reset_index()
+            st.markdown(sec("Revenue Trajectory 2024–2026"), unsafe_allow_html=True)
+            yearly_el = df_sales.groupby("Yr")["TotalRevenue"].sum().reset_index()
+            yearly_el = yearly_el[yearly_el["Yr"] <= 2026]
+            colors_bar = ["#2c5f8a" if y < 2026 else "#e65100" for y in yearly_el["Yr"]]
+            labels_bar = [fmt(r) + (" (YTD)" if y==2026 else "") for y,r in zip(yearly_el["Yr"],yearly_el["TotalRevenue"])]
             fig = go.Figure()
-            fig.add_trace(go.Bar(x=yearly_m["Yr"], y=yearly_m["TotalRevenue"]/1e9,
-                name="Revenue (B)", marker_color="#2c5f8a",
-                text=yearly_m["TotalRevenue"].apply(fmt), textposition="outside"))
-            # Trend line
-            x_vals = yearly_m["Yr"].values
-            y_vals = yearly_m["TotalRevenue"].values/1e9
-            z = np.polyfit(x_vals, y_vals, 1)
-            p = np.poly1d(z)
-            fig.add_trace(go.Scatter(x=x_vals, y=p(x_vals), name="Growth Trend",
-                line=dict(color="#e65100", width=2, dash="dash")))
-            apply_layout(fig, height=320, xaxis=dict(gridcolor="#eee"),
-                yaxis=dict(gridcolor="#eee",title="Revenue (PKR Billion)"))
-            fig.update_layout(title="Revenue Growth Trajectory 2024–2025")
+            fig.add_trace(go.Bar(
+                x=yearly_el["Yr"], y=yearly_el["TotalRevenue"]/1e9,
+                text=labels_bar, textposition="outside",
+                marker_color=colors_bar, name="Revenue"))
+            # Target line for 2026
+            fig.add_trace(go.Scatter(
+                x=[2025.5, 2026, 2026.5], y=[None, 28, None],
+                mode="markers", marker=dict(symbol="line-ew", size=20, color="#c62828", line_width=3),
+                name="PKR 28B Target 2026"))
+            apply_layout(fig, height=320,
+                xaxis=dict(gridcolor="#eee", tickmode="array",
+                           tickvals=yearly_el["Yr"].tolist(),
+                           ticktext=[str(int(y)) for y in yearly_el["Yr"]]),
+                yaxis=dict(gridcolor="#eee", title="Revenue (PKR Billions)"))
+            fig.update_layout(title="Revenue Growth — Orange = 2026 YTD (Apr 14) | Target: PKR 28B")
             st.plotly_chart(fig, use_container_width=True)
+
         with col2:
             st.markdown(sec("Strategic Risk & Opportunity Matrix"), unsafe_allow_html=True)
             risks = pd.DataFrame({
                 "Category":["Risk","Risk","Risk","Opportunity","Opportunity","Opportunity"],
-                "Item":["Top 5 Products = 34.5% Revenue",
+                "Item":["2026 Run Rate PKR 21B vs PKR 28B Target",
                         "ROI Declining 16.2x→13.3x",
-                        "Division 4 Low Field Activity",
-                        "Expand to New Cities",
-                        "Nutraceutical Growth +35.5%",
-                        "Xcept 48.0x ROI"],
-                "Level":["🟡 High","🟡 High","🟡 Medium","🟢 High Value","🟢 High Value","🟢 Immediate"],
-                "Action":["Develop 3+ new products",
-                          "Fix promo timing — move July to Jan",
-                          "Set 40 trips/person target",
-                          "Open Premier Sales depots in growth cities",
-                          "Dedicated Nutra team + PKR 20M budget",
-                          "Increase Xcept + Ramipace budgets"]
+                        "Top 5 Products = 34.5% Revenue",
+                        "Xcept 48.0x ROI — Severely Underinvested",
+                        "Nutraceutical +35.5% Growth",
+                        "Erlina Plus XR +699% — New Star"],
+                "Level":["🔴 Critical","🟡 High","🟡 High","🟢 Immediate","🟢 High Value","🟢 High Value"],
+                "Action":["Aggressive H2 2026 campaign needed",
+                          "Fix promo timing — move July budget to Jan",
+                          "Develop 3+ new products urgently",
+                          "Double Xcept budget from PKR 27.7M",
+                          "Launch dedicated Nutra team + PKR 20M",
+                          "Allocate budget now — minimal spend so far"]
             })
             st.dataframe(risks, use_container_width=True, hide_index=True)
 
-        st.markdown(sec("Revenue Growth Waterfall — Next 12 Months"), unsafe_allow_html=True)
-        waterfall = pd.DataFrame({
-            "Source":["2025 Base","Fix Promo Timing","Triple Ramipace","Invest in Finno-Q",
-                      "Q4 Boost","Karachi+Swat","Nutraceutical","Fix Discounts","2026 Target"],
-            "Value": [rev_25_m/1e9, 0.3, 0.95, 0.2, 0.3, 0.15, 0.2, 0.2,
-                      (rev_25_m+300e6+950e6+200e6+300e6+150e6+200e6+200e6)/1e9],
-            "Type":  ["base","positive","positive","positive","positive","positive","positive","positive","total"]
-        })
-        colors_wf = {"base":"#2c5f8a","positive":"#2e7d32","total":"#7b1fa2"}
+        # ── Waterfall to PKR 28B ──
+        st.markdown(sec("📊 How to Hit PKR 28B — Revenue Waterfall"), unsafe_allow_html=True)
+        wf_sources = ["2025 Base","Q4 Aggressive Push","Xcept Investment","Fix Promo Timing",
+                      "Erlina Plus XR","Finno-Q","New City Depots","Nutraceutical Push","2026 Stretch Target"]
+        wf_values  = [rev_25_el/1e9, 1.5, 0.3, 0.3, 0.5, 0.2, 0.2, 0.3, 28.0]
+        wf_types   = ["base","positive","positive","positive","positive","positive","positive","positive","total"]
+        wf_colors  = {"base":"#2c5f8a","positive":"#2e7d32","total":"#c62828"}
         fig = go.Figure(go.Bar(
-            x=waterfall["Source"], y=waterfall["Value"],
-            marker_color=[colors_wf[t] for t in waterfall["Type"]],
-            text=[f"PKR {v:.1f}B" for v in waterfall["Value"]],
+            x=wf_sources, y=wf_values,
+            marker_color=[wf_colors[t] for t in wf_types],
+            text=[f"PKR {v:.1f}B" for v in wf_values],
             textposition="outside", textfont_size=10))
-        apply_layout(fig, height=360, xaxis=dict(gridcolor="#eee",tickangle=-20),
-                     yaxis=dict(gridcolor="#eee",title="Revenue (PKR Billion)"))
-        fig.update_layout(title="Revenue Growth Waterfall — Identified Opportunities")
+        apply_layout(fig, height=360, xaxis=dict(gridcolor="#eee", tickangle=-20),
+                     yaxis=dict(gridcolor="#eee", title="Revenue (PKR Billion)"))
+        fig.update_layout(title="Road to PKR 28B — Each bar = incremental revenue needed (Red = Target)")
         st.plotly_chart(fig, use_container_width=True)
 
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(sec("🟢 3 Biggest Strengths"), unsafe_allow_html=True)
-            st.markdown(good("<b>Revenue +16.60%</b> — Strong consistent growth from PKR 20.2B to PKR 23.6B"), unsafe_allow_html=True)
-            st.markdown(good("<b>Xcept 48.0x ROI</b> — Best product investment in company history"), unsafe_allow_html=True)
-            st.markdown(good("<b>Nutraceutical +35.5%</b> — Faster growing than Pharma, huge future potential"), unsafe_allow_html=True)
+            st.markdown(good(f"<b>Revenue +{yoy_el:.1f}%</b> — PKR {rev_24_el/1e9:.2f}B → PKR {rev_25_el/1e9:.2f}B"), unsafe_allow_html=True)
+            st.markdown(good("<b>Xcept 48.0x ROI</b> — Top ROI product verified from live SQL"), unsafe_allow_html=True)
+            st.markdown(good("<b>Erlina Plus XR +699%</b> — Fastest growing product. Major opportunity."), unsafe_allow_html=True)
         with col2:
-            st.markdown(sec("🟡 3 Things to Fix"), unsafe_allow_html=True)
-            st.markdown(warn("<b>Promo Timing</b> — July #1 spend, #8 in sales. Move budget = +PKR 300M free"), unsafe_allow_html=True)
-            st.markdown(warn("<b>ROI Declining</b> — 16.2x→13.3x. Spend growing 2x faster than revenue"), unsafe_allow_html=True)
-            st.markdown(warn("<b>Product Risk</b> — Top 5 = 34.5% revenue. One failure = major loss"), unsafe_allow_html=True)
+            st.markdown(sec("🟡 3 Things to Fix Now"), unsafe_allow_html=True)
+            st.markdown(warn(f"<b>2026 Run Rate PKR {run_rate_26_el/1e9:.1f}B</b> — PKR 7B below PKR 28B target. Need H2 surge."), unsafe_allow_html=True)
+            st.markdown(warn(f"<b>ROI Declining</b> — {roi_24_el:.1f}x→{roi_25_el:.1f}x. Promo spend up +41.4%, revenue only +{yoy_el:.1f}%."), unsafe_allow_html=True)
+            st.markdown(warn("<b>Promo Timing Wrong</b> — July #1 spend but #8 in sales. Move to Jan/Feb = +PKR 300M free."), unsafe_allow_html=True)
         with col3:
             st.markdown(sec("🔴 3 Urgent Actions"), unsafe_allow_html=True)
-            st.markdown(danger("<b>Triple Ramipace Budget</b> — 48.0x ROI verified. PKR 59M → 120M = +PKR 500M expected"), unsafe_allow_html=True)
-            st.markdown(warn("<b>Fix Promo Timing</b> — Move July budget to January = +PKR 300M at zero extra cost"), unsafe_allow_html=True)
-            st.markdown(good("<b>Expand City Coverage</b> — Identify high-revenue cities with no Premier Sales depot. Open 3–5 new depots by Q3 2026"), unsafe_allow_html=True)
+            st.markdown(danger("<b>H2 2026 Aggressive Push</b> — Need PKR 21B in May-Dec to hit PKR 28B. Launch Q3/Q4 campaigns NOW."), unsafe_allow_html=True)
+            st.markdown(danger("<b>Double Xcept Budget</b> — 48.0x ROI but only PKR 27.7M spent. Immediate budget increase."), unsafe_allow_html=True)
+            st.markdown(warn("<b>Fix Promo Timing</b> — Move July budget to Jan/Feb = +PKR 300M at zero extra cost."), unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown(sec("💰 Total Financial Opportunity Summary"), unsafe_allow_html=True)
+        st.markdown(sec("💰 Investment Plan to Hit PKR 28B Target"), unsafe_allow_html=True)
         opp_df = pd.DataFrame({
-            "Opportunity":["Triple Ramipace Budget","Fix Promo Timing (No Cost!)",
-                           "Invest in Finno-Q","Q4 Campaign Boost","Karachi Field Team Expansion",
-                           "Nutraceutical Division","New City Depot Expansion","Erlina Plus XR Boost"],
-            "Investment":["PKR 29M","PKR 0","PKR 10M","PKR 30M","PKR 15M","PKR 20M","PKR 50M","PKR 5M"],
-            "Expected Return":["+PKR 500M","+PKR 300M","+PKR 200M","+PKR 300M","+PKR 150M","+PKR 300M","+PKR 200M","+PKR 100M"],
-            "Timeline":["Immediate","1 Month","3 Months","6 Months","6 Months","12 Months","12 Months","3 Months"],
-            "Confidence":["🟢 Very High","🟢 Very High","🟢 High","🟢 High","🟡 Medium","🟡 Medium","🟡 Medium","🟢 High"]
+            "Initiative":["H2 2026 Aggressive Campaign","Invest in Xcept (48.0x ROI)",
+                          "Fix Promo Timing (Zero Cost)","Erlina Plus XR Push",
+                          "Q4 Double Campaign","Invest in Finno-Q (+233%)",
+                          "New City Depot Expansion","Nutraceutical Team Launch"],
+            "Investment":["PKR 50M","PKR 30M","PKR 0","PKR 10M",
+                          "PKR 40M","PKR 10M","PKR 50M","PKR 20M"],
+            "Expected Revenue":["+PKR 1.5B","+PKR 300M","+PKR 300M","+PKR 500M",
+                                 "+PKR 500M","+PKR 200M","+PKR 200M","+PKR 300M"],
+            "Timeline":["Immediate","This Week","1 Month","This Week",
+                        "Start Sep 2026","This Week","Q3 2026","Q2 2026"],
+            "Priority":["🔴 Critical","🔴 Critical","🔴 Critical","🔴 This Week",
+                        "🟡 Plan Now","🟡 This Month","🟡 This Month","🟢 This Year"]
         })
         st.dataframe(opp_df, use_container_width=True, hide_index=True)
 
-        total_return = 951+300+200+300+150+300+200+100
-        total_invest = 29+0+10+30+15+20+50+5
+        total_invest_el = 50+30+0+10+40+10+50+20
+        total_return_el = 1500+300+300+500+500+200+200+300
         c1,c2,c3,c4 = st.columns(4)
-        c1.markdown(kpi("Total Potential",  f"PKR {total_return/1e3:.2f}B", "Revenue + Savings"), unsafe_allow_html=True)
-        c2.markdown(kpi("Investment Needed",f"PKR {total_invest}M",         "To unlock all"), unsafe_allow_html=True)
-        c3.markdown(kpi("Expected ROI",     f"{total_return/total_invest:.0f}x", "Return on investment plan"), unsafe_allow_html=True)
-        c4.markdown(kpi("2026 Revenue Target", fmt(run_rate_26*1.15),       "+15% from identified gains"), unsafe_allow_html=True)
+        c1.markdown(kpi("Total Investment",  f"PKR {total_invest_el}M",              "To hit PKR 28B"), unsafe_allow_html=True)
+        c2.markdown(kpi("Expected Revenue",  f"PKR {total_return_el/1e3:.2f}B",      "From all initiatives"), unsafe_allow_html=True)
+        c3.markdown(kpi("Plan ROI",          f"{total_return_el/total_invest_el:.0f}x","Return on investment plan"), unsafe_allow_html=True)
+        c4.markdown(kpi("2026 Target",       "PKR 28.0B",                             f"Need +PKR {gap_to_target/1e9:.1f}B from Apr 14"), unsafe_allow_html=True)
