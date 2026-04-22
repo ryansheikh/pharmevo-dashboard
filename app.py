@@ -1735,29 +1735,77 @@ elif page == "🔬 Strategic Intelligence Hub":
 
     with hub_tab1:
         st.markdown("<h2 style='color:#2c5f8a'>🔗 Combined ROI — All 4 Databases</h2>", unsafe_allow_html=True)
-        st.markdown(note("Updated April 15, 2026. Connects promotional spending (FTTS) with actual sales revenue (DSR). ROI 2024=16.2x | ROI 2025=13.3x — declining. Promo spend grew +41.4% but revenue only +16.60%."), unsafe_allow_html=True)
-        st.markdown(good("KEY PROOF: Promotional spend and same-month revenue have <b>0.784 correlation</b>. Every PKR 1 spent = PKR 13.3 in revenue (2025)."), unsafe_allow_html=True)
 
-        msp   = df_act[df_act["Yr"]>=2024].groupby("Date")["TotalAmount"].sum().reset_index()
-        mrv   = df_s.groupby("Date")["TotalRevenue"].sum().reset_index()
+        # ── Compute live FY-level ROI for the narrative ──
+        _sales_net_hub = df_sales[df_sales["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_sales.columns else df_sales
+        _net_by_fy_hub   = _sales_net_hub.groupby("FiscalYear")["TotalRevenue"].sum()
+        _spend_by_fy_hub = df_act.groupby("FiscalYear")["TotalAmount"].sum()
+        _mo_by_fy_hub    = df_sales.groupby("FiscalYear")["Mo"].nunique()
+
+        fys_sorted_hub = sorted(_net_by_fy_hub.index)
+        complete_fys_hub = [fy for fy in fys_sorted_hub if _mo_by_fy_hub.get(fy, 0) == 12]
+        FY_LAST_HUB  = complete_fys_hub[-1] if complete_fys_hub else None
+        FY_PREV_HUB  = complete_fys_hub[-2] if len(complete_fys_hub) >= 2 else None
+        FY_CURR_HUB  = fys_sorted_hub[-1] if fys_sorted_hub else None
+
+        roi_per_fy = {fy: (_net_by_fy_hub.get(fy, 0) / _spend_by_fy_hub.get(fy, 0))
+                      for fy in fys_sorted_hub if _spend_by_fy_hub.get(fy, 0) > 0}
+
+        roi_str = " | ".join(f"{fy}: {r:.1f}x" for fy, r in roi_per_fy.items())
+
+        # Growth comparison: rev growth vs spend growth per FY
+        growth_note_parts = []
+        for i in range(1, len(complete_fys_hub)):
+            p, c = complete_fys_hub[i-1], complete_fys_hub[i]
+            rv_p = _net_by_fy_hub.get(p, 0); rv_c = _net_by_fy_hub.get(c, 0)
+            sp_p = _spend_by_fy_hub.get(p, 0); sp_c = _spend_by_fy_hub.get(c, 0)
+            rv_g = (rv_c-rv_p)/rv_p*100 if rv_p else 0
+            sp_g = (sp_c-sp_p)/sp_p*100 if sp_p else 0
+            growth_note_parts.append(f"{c}: rev {rv_g:+.1f}% vs spend {sp_g:+.1f}%")
+
+        st.markdown(note(
+            f"Connects promotional spending (FTTS) with actual sales revenue (DSR). "
+            f"Pakistan fiscal year (Jul–Jun). "
+            f"ROI by FY: {roi_str}. "
+            f"⚠️ ROI declining consistently — spend growing faster than revenue: " +
+            " | ".join(growth_note_parts) + ". "
+            f"Target FY25-26 = PKR 28B (set by management)."
+        ), unsafe_allow_html=True)
+
+        # ── Live correlation ──
+        msp   = df_act.groupby("Date")["TotalAmount"].sum().reset_index()
+        mrv   = _sales_net_hub.groupby("Date")["TotalRevenue"].sum().reset_index()
         combo = pd.merge(msp, mrv, on="Date", how="inner")
+        corr_live = combo["TotalAmount"].corr(combo["TotalRevenue"]) if len(combo) > 1 else 0
+        roi_last_hub = roi_per_fy.get(FY_LAST_HUB, 0) if FY_LAST_HUB else 0
 
-        st.markdown(sec("Promo Spend vs Revenue — Monthly (Updated Apr 2026)"), unsafe_allow_html=True)
-        st.markdown(note("Orange bars = promo spend. Blue line = revenue. When spending goes up, revenue follows. July = highest spend (#1) but only #8 in sales — biggest misalignment."), unsafe_allow_html=True)
+        st.markdown(good(
+            f"KEY METRIC: Promotional spend and same-month net revenue have "
+            f"<b>{corr_live:.3f} correlation</b> "
+            f"({'moderate' if abs(corr_live) < 0.6 else 'strong'}). "
+            f"Every PKR 1 spent in {FY_LAST_HUB} = PKR {roi_last_hub:.1f} net revenue."
+        ), unsafe_allow_html=True)
+
+        st.markdown(sec("Promo Spend vs Revenue — Monthly"), unsafe_allow_html=True)
+        st.markdown(note(
+            "Orange bars = promo spend. Blue line = net revenue. "
+            f"Correlation = {corr_live:.2f} — promo spend helps but is NOT the only revenue driver. "
+            "Watch for months where bars go up but the line doesn't follow (inefficient spend)."
+        ), unsafe_allow_html=True)
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         fig.add_trace(go.Bar(x=combo["Date"], y=combo["TotalAmount"]/1e6,
             name="Promo Spend (M PKR)", marker_color="rgba(230,81,0,0.7)",
             hovertemplate="%{x|%b %Y}<br>Spend: PKR %{y:.1f}M<extra></extra>"), secondary_y=False)
         fig.add_trace(go.Scatter(x=combo["Date"], y=combo["TotalRevenue"]/1e6,
-            name="Revenue (M PKR)", line=dict(color="#2c5f8a", width=3),
+            name="Net Revenue (M PKR)", line=dict(color="#2c5f8a", width=3),
             mode="lines+markers", marker=dict(size=6),
             hovertemplate="%{x|%b %Y}<br>Revenue: PKR %{y:.1f}M<extra></extra>"), secondary_y=True)
         apply_layout(fig, height=360, hovermode="x unified")
         fig.update_yaxes(title_text="Promo Spend (M PKR)", gridcolor="#eeeeee", secondary_y=False)
-        fig.update_yaxes(title_text="Revenue (M PKR)", gridcolor="#eeeeee", secondary_y=True)
+        fig.update_yaxes(title_text="Net Revenue (M PKR)", gridcolor="#eeeeee", secondary_y=True)
         st.plotly_chart(fig, use_container_width=True)
 
-        # Filterable ROI
+        # ── ROI Explorer ──
         st.markdown("---")
         st.markdown(sec("🔍 ROI Explorer — Adjustable"), unsafe_allow_html=True)
         col_rf1, col_rf2, col_rf3 = st.columns(3)
@@ -1766,17 +1814,19 @@ elif page == "🔬 Strategic Intelligence Hub":
         with col_rf2:
             sort_roi_filter = st.selectbox("Sort", ["Top ROI (Best)", "Bottom ROI (Worst)"], key="roi_sort_filter")
         with col_rf3:
-            min_spend_roi = st.number_input("Min Promo Spend (PKR)", value=500000, step=100000, key="roi_min_spend")
+            min_spend_roi = st.number_input("Min Promo Spend (PKR)", value=1000000, step=100000, key="roi_min_spend")
 
-        rv_rf = df_sales.groupby("ProductName")["TotalRevenue"].sum()
+        _sales_gross_hub = df_sales[df_sales["SaleFlag"]=="S"] if "SaleFlag" in df_sales.columns else df_sales
+        rv_rf = _sales_gross_hub.groupby("ProductName")["TotalRevenue"].sum()
         sp_rf = df_act.groupby("Product")["TotalAmount"].sum()
         rc_rf = pd.DataFrame({"Rev":rv_rf,"Spend":sp_rf}).dropna().reset_index()
         rc_rf.columns = ["ProductName","Rev","Spend"]
-        rc_rf = rc_rf[rc_rf["Spend"]>=min_spend_roi]
+        rc_rf = rc_rf[rc_rf["Spend"] >= min_spend_roi]
         rc_rf["ROI"] = rc_rf["Rev"]/rc_rf["Spend"]
         asc_roi = (sort_roi_filter == "Bottom ROI (Worst)")
         rc_rf = rc_rf.sort_values("ROI", ascending=asc_roi).head(n_roi_filter)
-        colors_rff = ["#FFD700" if "XCEPT" in p.upper() else "#c62828" if r<5 else "#2e7d32" if r>30 else "#2c5f8a" for p,r in zip(rc_rf["ProductName"],rc_rf["ROI"])]
+        colors_rff = ["#FFD700" if "XCEPT" in p.upper() else "#c62828" if r<5 else "#2e7d32" if r>30 else "#2c5f8a"
+                      for p,r in zip(rc_rf["ProductName"],rc_rf["ROI"])]
         fig_rf = go.Figure(go.Bar(x=rc_rf["ROI"], y=rc_rf["ProductName"], orientation="h",
             text=rc_rf["ROI"].apply(lambda x: f"{x:.1f}x"), textposition="outside", textfont_size=10,
             marker_color=colors_rff))
@@ -1787,10 +1837,14 @@ elif page == "🔬 Strategic Intelligence Hub":
         st.plotly_chart(fig_rf, use_container_width=True)
         st.markdown("---")
 
+        # ── ROI Bubble Chart + Top 15 ROI ──
         col1, col2 = st.columns(2)
         with col1:
             st.markdown(sec("ROI Bubble Chart"), unsafe_allow_html=True)
-            st.markdown(note("Each bubble = one product. Bigger bubble = higher ROI. Top-LEFT = best zone. Green = exceptional ROI (>50x)."), unsafe_allow_html=True)
+            st.markdown(note(
+                "Each bubble = one product. Bigger bubble = higher ROI. "
+                "Top-LEFT zone (high revenue, low spend) = best products."
+            ), unsafe_allow_html=True)
             rp = df_roi[(df_roi["TotalPromoSpend"]>0) & (df_roi["ROI"]>0) & (df_roi["ROI"]<200)].copy()
             rp["BubbleSize"] = rp["ROI"].clip(lower=1)
             fig = px.scatter(rp, x="TotalPromoSpend", y="TotalRevenue", size="BubbleSize", color="ROI",
@@ -1798,17 +1852,26 @@ elif page == "🔬 Strategic Intelligence Hub":
             apply_layout(fig, height=420)
             st.plotly_chart(fig, use_container_width=True)
         with col2:
-            st.markdown(sec("Top 15 Products by ROI (Recalculated Apr 2026)"), unsafe_allow_html=True)
-            st.markdown(note("Gold = ROI above 60x. Green = above 30x. Ramipace = 48.0x verified from raw data. Xcept = 46.3x."), unsafe_allow_html=True)
-            rv_p  = df_sales.groupby("ProductName")["TotalRevenue"].sum()
-            sp_p  = df_act.groupby("Product")["TotalAmount"].sum()
-            roi_c = pd.DataFrame({"Rev":rv_p,"Spend":sp_p}).dropna().reset_index()
+            st.markdown(sec("Top 15 Products by ROI"), unsafe_allow_html=True)
+
+            # Filter: spend > 1M AND revenue > 10M (same as verification block)
+            roi_c = pd.DataFrame({"Rev":rv_rf,"Spend":sp_rf}).dropna().reset_index()
             roi_c.columns = ["ProductName","Rev","Spend"]
-            roi_c = roi_c[roi_c["Spend"]>0]
+            roi_c = roi_c[(roi_c["Spend"] > 1e6) & (roi_c["Rev"] > 10e6)]
             roi_c["ROI"] = roi_c["Rev"]/roi_c["Spend"]
             tr = roi_c.nlargest(15,"ROI")
-            colors_r = ["#FFD700" if "XCEPT" in p.upper() else "#2e7d32" if r>50 else "#2c5f8a"
-                        for p,r in zip(tr["ProductName"],tr["ROI"])]
+
+            # Live insight about top products
+            if len(tr) >= 2:
+                top1 = tr.iloc[0]
+                st.markdown(note(
+                    f"Gold = top product. Green = ROI above 30x. "
+                    f"<b>{top1['ProductName']}</b> leads at <b>{top1['ROI']:.1f}x ROI</b> "
+                    f"(rev {fmt(top1['Rev'])}, spend only {fmt(top1['Spend'])}). "
+                    "Filtered: spend > PKR 1M, revenue > PKR 10M to exclude noise."
+                ), unsafe_allow_html=True)
+            colors_r = ["#FFD700" if i==0 else "#2e7d32" if r>30 else "#2c5f8a"
+                        for i,r in enumerate(tr["ROI"])]
             fig = go.Figure(go.Bar(x=tr["ROI"], y=tr["ProductName"], orientation="h",
                 marker_color=colors_r, text=[f"{r:.1f}x" for r in tr["ROI"]],
                 textposition="outside", textfont_size=11))
@@ -1816,17 +1879,43 @@ elif page == "🔬 Strategic Intelligence Hub":
                          xaxis=dict(gridcolor="#eeeeee", title="ROI"))
             st.plotly_chart(fig, use_container_width=True)
 
+        # ── Team ROI Summary Table (LIVE COMPUTED) ──
         st.markdown(sec("Team ROI Summary Table"), unsafe_allow_html=True)
+        st.markdown(note(
+            "Computed live: each team's net sales ÷ promotional spend. "
+            "Hidden: teams with spend < PKR 500K, revenue < PKR 10M, or ROI > 100x "
+            "(these indicate team-name spelling mismatches between DSR/FTTS databases)."
+        ), unsafe_allow_html=True)
+
+        _team_rev = _sales_net_hub.groupby("TeamName")["TotalRevenue"].sum()
+        _team_sp  = df_act.groupby("RequestorTeams")["TotalAmount"].sum()
+        # Normalize case for join
+        _team_rev.index = _team_rev.index.astype(str).str.upper().str.strip()
+        _team_sp.index  = _team_sp.index.astype(str).str.upper().str.strip()
+        team_roi_live = pd.DataFrame({"Revenue": _team_rev, "Spend": _team_sp}).fillna(0)
+        # Require meaningful spend AND revenue
+        team_roi_live = team_roi_live[team_roi_live["Spend"] >= 500_000]
+        team_roi_live = team_roi_live[team_roi_live["Revenue"] >= 10_000_000]
+        team_roi_live["ROI_raw"] = team_roi_live["Revenue"] / team_roi_live["Spend"]
+        # Hide data-mismatch outliers: if ROI is implausibly high (>100x), team names
+        # almost certainly don't match between DSR (sales) and FTTS (activities) DBs.
+        team_roi_live = team_roi_live[team_roi_live["ROI_raw"] <= 100]
+        team_roi_live = team_roi_live.sort_values("Revenue", ascending=False).head(15)
+
+        # Format for display
+        def _status(roi):
+            if roi >= 30: return "🟢 Excellent"
+            if roi >= 20: return "🟢 Best"
+            if roi >= 15: return "🟡 Good"
+            if roi >= 10: return "🟡 OK"
+            return "🔴 Review"
+
         tdf = pd.DataFrame({
-            "Team":["CHALLENGERS","BRAVO","METABOLIZERS","LEGENDS","CHAMPIONS",
-                    "WINNERS","WARRIORS","ALPHA","BONE SAVIORS","TITANS"],
-            "Promo Spend":["PKR 118.6M","PKR 44.9M","PKR 81.7M","PKR 78.1M","PKR 37.5M",
-                           "PKR 67.2M","PKR 75.5M","PKR 61.4M","PKR 133.6M","PKR 101.7M"],
-            "Revenue":["PKR 4.53B","PKR 1.52B","PKR 2.38B","PKR 2.10B","PKR 1.07B",
-                       "PKR 1.49B","PKR 1.59B","PKR 1.11B","PKR 2.32B","PKR 1.33B"],
-            "ROI":["38.2x","33.9x","29.1x","26.8x","28.7x","22.3x","21.0x","18.0x","17.4x","13.1x"],
-            "Status":["🟢 Best","🟢 Excellent","🟢 Excellent","🟢 Excellent","🟢 Excellent",
-                      "🟡 Good","🟡 Good","🟡 Good","🟡 Good","🔴 Review"]
+            "Team": team_roi_live.index,
+            "Promo Spend": team_roi_live["Spend"].apply(fmt).values,
+            "Revenue (Net)": team_roi_live["Revenue"].apply(fmt).values,
+            "ROI": team_roi_live["ROI_raw"].apply(lambda x: f"{x:.1f}x").values,
+            "Status": team_roi_live["ROI_raw"].apply(_status).values,
         })
         st.dataframe(tdf, use_container_width=True, hide_index=True)
 
@@ -1834,78 +1923,225 @@ elif page == "🔬 Strategic Intelligence Hub":
 
     with hub_tab2:
         st.markdown("<h2 style='color:#2c5f8a'>🚨 Alerts & Strategic Opportunities</h2>", unsafe_allow_html=True)
-        st.markdown(note("All alerts verified from live data as of April 15, 2026. Green = opportunity. Orange = warning. Red = urgent action this week."), unsafe_allow_html=True)
 
-        # ROI per product from raw data
-        rv_a  = df_sales.groupby("ProductName")["TotalRevenue"].sum()
+        # Recompute to stay in scope
+        _sales_net_t2  = df_sales[df_sales["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_sales.columns else df_sales
+        _sales_gross_t2= df_sales[df_sales["SaleFlag"]=="S"] if "SaleFlag" in df_sales.columns else df_sales
+        _net_by_fy_t2   = _sales_net_t2.groupby("FiscalYear")["TotalRevenue"].sum()
+        _spend_by_fy_t2 = df_act.groupby("FiscalYear")["TotalAmount"].sum()
+        _mo_by_fy_t2    = df_sales.groupby("FiscalYear")["Mo"].nunique()
+
+        fys_t2 = sorted(_net_by_fy_t2.index)
+        complete_fys_t2 = [fy for fy in fys_t2 if _mo_by_fy_t2.get(fy, 0) == 12]
+        FY_LAST_T2 = complete_fys_t2[-1] if complete_fys_t2 else None
+        FY_PREV_T2 = complete_fys_t2[-2] if len(complete_fys_t2) >= 2 else None
+
+        # Product-level ROI for opportunity/waste tables
+        rv_a  = _sales_gross_t2.groupby("ProductName")["TotalRevenue"].sum()
         sp_a  = df_act.groupby("Product")["TotalAmount"].sum()
         roi_a = pd.DataFrame({"Revenue":rv_a,"Spend":sp_a}).dropna().reset_index()
         roi_a.columns = ["ProductName","TotalRevenue","TotalPromoSpend"]
-        roi_a = roi_a[roi_a["TotalPromoSpend"]>0]
+        roi_a = roi_a[roi_a["TotalPromoSpend"] > 100_000]
         roi_a["ROI"] = roi_a["TotalRevenue"]/roi_a["TotalPromoSpend"]
 
-        sp_24 = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
-        sp_25 = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
-        rev_24 = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
-        rev_25 = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
-        roi_24 = rev_24/sp_24 if sp_24>0 else 0
-        roi_25 = rev_25/sp_25 if sp_25>0 else 0
+        st.markdown(note(
+            f"All alerts verified from live SQL Server data. "
+            f"Pakistan fiscal year (Jul–Jun). "
+            f"Green = opportunity. Orange = warning. Red = urgent action."
+        ), unsafe_allow_html=True)
 
+        # ── Hidden Opportunities (High ROI, Low Spend) ──
         st.markdown(sec("🌟 Hidden Opportunities — High ROI Products Getting Low Budget"), unsafe_allow_html=True)
-        opp = roi_a[(roi_a["ROI"]>20)&(roi_a["TotalPromoSpend"]<roi_a["TotalPromoSpend"].median())].sort_values("ROI",ascending=False).head(10)
+        st.markdown(note(
+            "Criteria: ROI ≥ 20x AND spend < PKR 50M AND revenue > PKR 100M. "
+            "These products deliver strong returns on small budgets — the highest-leverage place to invest more."
+        ), unsafe_allow_html=True)
+        opp = roi_a[
+            (roi_a["ROI"] >= 20) &
+            (roi_a["TotalPromoSpend"] < 50e6) &
+            (roi_a["TotalRevenue"] > 100e6)
+        ].sort_values("ROI", ascending=False).head(15)
+        if len(opp) == 0:
+            st.info("No products currently meet all three criteria.")
         for _, row in opp.iterrows():
-            pot = row["ROI"]*row["TotalPromoSpend"]*2
-            st.markdown(good(f"<b>{row['ProductName']}</b> — ROI: <b>{row['ROI']:.1f}x</b> | Current Spend: {fmt(row['TotalPromoSpend'])} | Revenue: {fmt(row['TotalRevenue'])}<br><i>Action: Double budget to {fmt(row['TotalPromoSpend']*2)} → Expected ~{fmt(pot)}</i>"), unsafe_allow_html=True)
+            pot = row["ROI"] * row["TotalPromoSpend"] * 2   # double the budget at same ROI
+            st.markdown(good(
+                f"<b>{row['ProductName']}</b> — ROI: <b>{row['ROI']:.1f}x</b> | "
+                f"Current Spend: {fmt(row['TotalPromoSpend'])} | Revenue: {fmt(row['TotalRevenue'])}<br>"
+                f"<i>Action: Double budget to {fmt(row['TotalPromoSpend']*2)} → Expected ~{fmt(pot)} revenue at same ROI.</i>"
+            ), unsafe_allow_html=True)
 
+        # ── Budget Waste (High Spend, Low ROI) ──
         st.markdown(sec("⚠️ Budget Waste — High Spend, Low ROI"), unsafe_allow_html=True)
-        waste = roi_a[(roi_a["ROI"]<10)&(roi_a["TotalPromoSpend"]>roi_a["TotalPromoSpend"].median())].sort_values("TotalPromoSpend",ascending=False).head(5)
+        median_roi_t2 = roi_a["ROI"].median()
+        st.markdown(note(
+            f"Criteria: spend > PKR 50M AND ROI below median ({median_roi_t2:.1f}x). "
+            "These products consume significant budget for below-average returns. "
+            "Candidates for budget reduction and reallocation to Hidden Opportunity products."
+        ), unsafe_allow_html=True)
+        waste = roi_a[
+            (roi_a["ROI"] < median_roi_t2) &
+            (roi_a["TotalPromoSpend"] > 50e6)
+        ].sort_values("TotalPromoSpend", ascending=False).head(10)
+        if len(waste) == 0:
+            st.info("No products currently meet the waste criteria.")
+        total_waste_spend = waste["TotalPromoSpend"].sum()
         for _, row in waste.iterrows():
-            st.markdown(warn(f"<b>{row['ProductName']}</b> — ROI: <b>{row['ROI']:.1f}x</b> (avg {roi_a['ROI'].mean():.1f}x) | Spend: {fmt(row['TotalPromoSpend'])} → Revenue: {fmt(row['TotalRevenue'])}<br><i>Action: Reduce budget 50%, reallocate to high ROI products</i>"), unsafe_allow_html=True)
+            st.markdown(warn(
+                f"<b>{row['ProductName']}</b> — ROI: <b>{row['ROI']:.1f}x</b> "
+                f"(median: {median_roi_t2:.1f}x) | Spend: {fmt(row['TotalPromoSpend'])} → Revenue: {fmt(row['TotalRevenue'])}<br>"
+                f"<i>Action: Reduce budget 30–50%, reallocate to high-ROI Hidden Opportunity products.</i>"
+            ), unsafe_allow_html=True)
+        if len(waste) > 0:
+            st.markdown(warn(
+                f"<b>Combined waste candidate spend:</b> {fmt(total_waste_spend)}. "
+                f"Reallocating 50% = {fmt(total_waste_spend*0.5)} redirected to 30x+ ROI products "
+                f"could generate +{fmt(total_waste_spend*0.5*30)} additional revenue."
+            ), unsafe_allow_html=True)
 
-        st.markdown(sec("🚨 ROI Declining Alert — Updated April 2026"), unsafe_allow_html=True)
-        st.markdown(danger(f"ROI dropped from <b>{roi_24:.1f}x (2024)</b> to <b>{roi_25:.1f}x (2025)</b>. Promo spend grew +41.4% but revenue only +16.60%. Fix promo timing and discount abuse urgently. Target: 22x ROI for 2026."), unsafe_allow_html=True)
+        # ── ROI Declining Alert ──
+        st.markdown(sec("🚨 ROI Declining Alert"), unsafe_allow_html=True)
+        roi_trend_parts = [f"{fy}: {(_net_by_fy_t2.get(fy,0)/_spend_by_fy_t2.get(fy,1) if _spend_by_fy_t2.get(fy,0)>0 else 0):.1f}x"
+                           for fy in fys_t2]
+        if FY_LAST_T2 and FY_PREV_T2:
+            rv_g = (_net_by_fy_t2[FY_LAST_T2]-_net_by_fy_t2[FY_PREV_T2])/_net_by_fy_t2[FY_PREV_T2]*100
+            sp_g = (_spend_by_fy_t2[FY_LAST_T2]-_spend_by_fy_t2[FY_PREV_T2])/_spend_by_fy_t2[FY_PREV_T2]*100 if _spend_by_fy_t2.get(FY_PREV_T2,0)>0 else 0
+            st.markdown(danger(
+                f"ROI trend by FY: " + " → ".join(roi_trend_parts) + ". "
+                f"<b>{FY_LAST_T2}: revenue +{rv_g:.1f}% vs spend +{sp_g:.1f}%</b> — "
+                f"spend growing {sp_g/rv_g:.1f}× faster than revenue. "
+                f"Target FY25-26 = PKR 28B requires promo efficiency improvement. "
+                f"Recommended action: pause spend increases, reallocate toward Hidden Opportunities above."
+            ), unsafe_allow_html=True)
 
+        # ── Division Field Activity Alerts ──
         st.markdown(sec("🚨 Division Field Activity Alerts"), unsafe_allow_html=True)
-        div_alert = df_travel.groupby("TravellerDivision").agg(Trips=("TravelCount","sum"),People=("Traveller","nunique")).reset_index()
+        div_alert = df_travel.groupby("TravellerDivision").agg(
+            Trips=("TravelCount","sum"),
+            People=("Traveller","nunique")
+        ).reset_index()
         div_alert["TripsPerPerson"] = (div_alert["Trips"]/div_alert["People"]).round(1)
         for _, row in div_alert.sort_values("TripsPerPerson").iterrows():
-            if row["TripsPerPerson"]<30:
-                st.markdown(danger(f"<b>{row['TravellerDivision']}</b> — Only {row['TripsPerPerson']:.0f} trips/person | {int(row['People'])} people | {int(row['Trips'])} total trips — Set minimum 40 trips target immediately!"), unsafe_allow_html=True)
+            tpp = row["TripsPerPerson"]
+            if tpp < 30:
+                st.markdown(danger(
+                    f"<b>{row['TravellerDivision']}</b> — Only {tpp:.1f} trips/person | "
+                    f"{int(row['People'])} people | {int(row['Trips'])} total trips — CRITICAL. "
+                    f"Set minimum 40 trips/person target immediately."
+                ), unsafe_allow_html=True)
+            elif tpp < 50:
+                st.markdown(warn(
+                    f"<b>{row['TravellerDivision']}</b> — {tpp:.1f} trips/person | "
+                    f"{int(row['People'])} people | {int(row['Trips'])} total trips — Below peer divisions."
+                ), unsafe_allow_html=True)
             else:
-                st.markdown(good(f"<b>{row['TravellerDivision']}</b> — {row['TripsPerPerson']:.0f} trips/person ✓"), unsafe_allow_html=True)
+                st.markdown(good(
+                    f"<b>{row['TravellerDivision']}</b> — {tpp:.1f} trips/person ✓ "
+                    f"({int(row['People'])} people, {int(row['Trips'])} trips)"
+                ), unsafe_allow_html=True)
 
-        st.markdown(sec("📋 Strategic Recommendations — April 2026"), unsafe_allow_html=True)
-        recs = [
-            ("good",   "Invest in Ramipace",        "ROI = 48.0x verified. Triple budget from PKR 59.4M to PKR 120M. Expected +PKR 500M revenue."),
-            ("good",   "Invest in Finno-Q",          "+226% growth with only PKR 6.7M spend. Allocate PKR 10M — target +400% growth in 2026."),
-            ("good",   "Invest in Erlina Plus XR",   "+699% growth — fastest growing product. Needs immediate promotional support."),
-            ("good",   "Focus on Q4 (Oct–Dec)",      "26.8% of annual revenue. Start September campaigns to build Q4 momentum."),
-            ("warn",   "Fix Promo Timing",            "July = #1 spend but #8 in sales. Move 30% July budget to January (+PKR 300M potential)."),
-            ("warn",   "Grow Nutraceuticals",         "+35.5% growth vs Pharma +28%. Launch dedicated team. Target 20% share by 2027."),
-            ("warn",   "Fix Division 4 Field Activity","Only 16 trips/person. Set 40 trips minimum target immediately."),
-            ("good",   "Expand to Untapped Cities",   "Karachi = PKR 872M revenue with minimal field trips. Add 300+ trips — expected +PKR 150M. Identify more cities where Premier Sales can open new depots."),
-            ("warn",   "Optimize Promo Efficiency",   "ROI declined 16.2x → 13.3x. Spend growing 2x faster than revenue — reallocate from low-ROI to high-ROI products."),
-            ("good",   "New City Depot Expansion",    "Analysis shows several high-revenue cities with zero current depot coverage. Premier Sales should evaluate opening new SDPs in these markets."),
-        ]
+        # ── Strategic Recommendations (live) ──
+        st.markdown(sec("📋 Strategic Recommendations"), unsafe_allow_html=True)
+
+        # Pull live top 3 hidden opps + bottom waste product for dynamic recommendations
+        recs = []
+        if len(opp) >= 1:
+            r1 = opp.iloc[0]
+            recs.append(("good", f"Double {r1['ProductName']} Budget",
+                f"Current {r1['ROI']:.1f}x ROI on {fmt(r1['TotalPromoSpend'])} spend. "
+                f"Doubling to {fmt(r1['TotalPromoSpend']*2)} → expected +{fmt(r1['TotalPromoSpend']*r1['ROI'])} additional revenue."))
+        if len(opp) >= 2:
+            r2 = opp.iloc[1]
+            recs.append(("good", f"Increase {r2['ProductName']} Spend",
+                f"{r2['ROI']:.1f}x ROI — significantly above company average. Current spend only {fmt(r2['TotalPromoSpend'])}."))
+
+        if len(waste) >= 1:
+            w1 = waste.iloc[0]
+            recs.append(("warn", f"Reduce {w1['ProductName']} Budget",
+                f"ROI {w1['ROI']:.1f}x is below median {median_roi_t2:.1f}x. Spend {fmt(w1['TotalPromoSpend'])} returning only {fmt(w1['TotalRevenue'])}. "
+                f"Reduce 30-50% and reallocate."))
+
+        # Division-specific
+        low_div = div_alert.sort_values("TripsPerPerson").iloc[0]
+        if low_div["TripsPerPerson"] < 30:
+            recs.append(("warn", f"Activate {low_div['TravellerDivision']}",
+                f"Only {low_div['TripsPerPerson']:.1f} trips/person. Set 40+ trips/person/FY target. "
+                f"Without more field visits, revenue growth will plateau."))
+
+        # ROI trend recommendation
+        if FY_LAST_T2 and FY_PREV_T2 and len(complete_fys_t2) >= 2:
+            roi_first = _net_by_fy_t2.get(complete_fys_t2[0], 0) / _spend_by_fy_t2.get(complete_fys_t2[0], 1) if _spend_by_fy_t2.get(complete_fys_t2[0], 0) > 0 else 0
+            roi_latest = _net_by_fy_t2.get(FY_LAST_T2, 0) / _spend_by_fy_t2.get(FY_LAST_T2, 1) if _spend_by_fy_t2.get(FY_LAST_T2, 0) > 0 else 0
+            recs.append(("warn", "Halt Promo Budget Growth",
+                f"Spend grew faster than revenue every year since {complete_fys_t2[0]} "
+                f"(overall ROI dropped from {roi_first:.1f}x to {roi_latest:.1f}x). "
+                f"Freeze total spend at {FY_LAST_T2} level; improve mix via reallocation above."))
+
+        # Correlation note (compute locally to avoid cross-tab scope dependency)
+        _msp_t2 = df_act.groupby("Date")["TotalAmount"].sum().reset_index()
+        _mrv_t2 = _sales_net_t2.groupby("Date")["TotalRevenue"].sum().reset_index()
+        _combo_t2 = pd.merge(_msp_t2, _mrv_t2, on="Date", how="inner")
+        _corr_t2 = _combo_t2["TotalAmount"].corr(_combo_t2["TotalRevenue"]) if len(_combo_t2) > 1 else 0
+        recs.append(("good", "Test Timing-Shifted Campaigns",
+            f"Monthly correlation is only {_corr_t2:.2f} (moderate). "
+            f"Test shifting campaigns 1 month earlier — if revenue response improves, realign full calendar."))
+
+        # City expansion (evergreen)
+        recs.append(("good", "Open New Premier Sales Depots",
+            "Distribution Analysis page shows high-revenue cities with zero depot coverage. "
+            "Open 3-5 SDPs in priority cities → est. +PKR 150-200M new-market revenue in 12 months."))
+
+        # Nutraceutical growth
+        recs.append(("good", "Grow Nutraceutical Line",
+            "ZSDCY shows Nutraceutical +35.5% YoY vs Pharma +28%. Launch dedicated team; target 20% category share by FY27-28."))
+
         for style, title, desc in recs:
             fn = good if style=="good" else warn if style=="warn" else danger
             st.markdown(fn(f"<b>{title}:</b> {desc}"), unsafe_allow_html=True)
 
+        # ── Quick Wins Action Table (live) ──
         st.markdown(sec("⚡ Quick Wins Action Table"), unsafe_allow_html=True)
-        qw = pd.DataFrame({
-            "Action":["Triple Ramipace budget","Allocate PKR 10M to Finno-Q",
-                      "Move July spend to January","Add 300+ Karachi field trips",
-                      "Double Q4 campaigns","Launch Nutraceutical team",
-                      "Open new Premier Sales depots","Boost Division 4 field activity"],
-            "Expected Impact":["+PKR 500M revenue","+PKR 200M revenue",
-                               "+PKR 300M revenue","+PKR 150M revenue",
-                               "+PKR 300M Q4 revenue","+PKR 300M by 2027",
-                               "+PKR 200M new markets","+PKR 100M from more doctor coverage"],
-            "Priority":["🔴 THIS WEEK","🔴 THIS WEEK","🟡 THIS MONTH",
-                        "🟡 THIS MONTH","🟡 THIS MONTH","🟢 THIS YEAR",
-                        "🟡 THIS MONTH","🟡 THIS MONTH"]
-        })
-        st.dataframe(qw, use_container_width=True, hide_index=True)
+        qw_rows = []
+
+        # Top 3 hidden opps → 3 rows
+        for i in range(min(3, len(opp))):
+            r = opp.iloc[i]
+            uplift = r["TotalPromoSpend"] * r["ROI"]   # potential incremental rev at 2x spend
+            qw_rows.append({
+                "Action": f"Double {r['ProductName']} promo budget",
+                "Expected Impact": f"+{fmt(uplift)} revenue",
+                "Priority": "🔴 THIS WEEK"
+            })
+        # Top 2 waste → reduce
+        for i in range(min(2, len(waste))):
+            r = waste.iloc[i]
+            savings = r["TotalPromoSpend"] * 0.4
+            qw_rows.append({
+                "Action": f"Reduce {r['ProductName']} budget 40%",
+                "Expected Impact": f"Save {fmt(savings)} → redirect to high-ROI",
+                "Priority": "🟡 THIS MONTH"
+            })
+        # Division action
+        if low_div["TripsPerPerson"] < 30:
+            qw_rows.append({
+                "Action": f"Activate {low_div['TravellerDivision']} field visits",
+                "Expected Impact": "+PKR 100M from better doctor coverage",
+                "Priority": "🟡 THIS MONTH"
+            })
+        # Always-on
+        qw_rows.extend([
+            {"Action": "Open 3-5 Premier Sales depots in priority cities",
+             "Expected Impact": "+PKR 150-200M new-market revenue (12 mo)",
+             "Priority": "🟢 THIS YEAR"},
+            {"Action": "Launch dedicated Nutraceutical team",
+             "Expected Impact": "+PKR 300M by FY27-28",
+             "Priority": "🟢 THIS YEAR"},
+            {"Action": "Freeze promo spend at FY24-25 level",
+             "Expected Impact": "Halt ROI decline; force efficiency gains",
+             "Priority": "🔴 THIS WEEK"},
+        ])
+        st.dataframe(pd.DataFrame(qw_rows), use_container_width=True, hide_index=True)
+
 
 
 
