@@ -468,14 +468,14 @@ if page == "🏠 Executive Summary":
     ret_last   = _rev(df_sales, FY_LAST, flag="R")
     net_last   = gross_last + ret_last
     units_last = _rev(df_sales, FY_LAST, flag="S", col="TotalUnits")
-    spend_last = _rev(df_act,   FY_LAST)
+    spend_last = _rev(df_act,   FY_LAST, col="TotalAmount")
     roi_last   = net_last / spend_last if spend_last > 0 else 0
     trips_last = _rev(df_travel, FY_LAST, col="TravelCount")
 
     gross_prev = _rev(df_sales, FY_PREV, flag="S")
     ret_prev   = _rev(df_sales, FY_PREV, flag="R")
     net_prev   = gross_prev + ret_prev
-    spend_prev = _rev(df_act,   FY_PREV)
+    spend_prev = _rev(df_act,   FY_PREV, col="TotalAmount")
     roi_prev   = net_prev / spend_prev if spend_prev > 0 else 0
 
     yoy_gross = ((gross_last-gross_prev)/gross_prev*100) if gross_prev > 0 else 0
