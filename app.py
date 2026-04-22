@@ -898,53 +898,141 @@ elif page == "📈 Sales Analysis":
 # PAGE 3: PROMOTIONAL ANALYSIS
 # ════════════════════════════════════════════════════════════
 elif page == "💰 Promotional Analysis":
-    st.markdown("<h2 style='color:#2c5f8a'>💰 Promotional Spend Analysis (2024–2026)</h2>", unsafe_allow_html=True)
-    st.markdown(note("Activities database (FTTS). Total spend = PKR 3.45B. 2024: PKR 1,252M | 2025: PKR 1,770M | 1.77B (+41.4%) | 2026 YTD: PKR 216M (Jan–Apr partial). ROI declining: 16.2x → 13.3x — spend growing faster than revenue."), unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#2c5f8a'>💰 Promotional Spend Analysis — Fiscal Year View</h2>", unsafe_allow_html=True)
 
-    df_af = df_act[df_act["Yr"].isin([2024,2025,2026])]
+    # ── Compute FY-level metrics live ──
+    _fy_sorted_p3 = sorted(df_act["FiscalYear"].dropna().unique()) if "FiscalYear" in df_act.columns else []
+    _fy_mo_act = df_act.groupby("FiscalYear")["Mo"].nunique() if _fy_sorted_p3 else pd.Series(dtype=int)
+    _fy_spend  = df_act.groupby("FiscalYear")["TotalAmount"].sum() if _fy_sorted_p3 else pd.Series(dtype=float)
+
+    # Net Sales by FY (for ROI)
+    _net_src_p3 = df_sales[df_sales["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_sales.columns else df_sales
+    _fy_net    = _net_src_p3.groupby("FiscalYear")["TotalRevenue"].sum()
+
+    # Identify latest complete + prior complete + current partial
+    complete_fys_p3 = [fy for fy in _fy_sorted_p3 if _fy_mo_act.get(fy, 0) == 12]
+    FY_LAST_P3 = complete_fys_p3[-1] if complete_fys_p3 else None
+    FY_PREV_P3 = complete_fys_p3[-2] if len(complete_fys_p3) >= 2 else None
+    FY_CURR_P3 = _fy_sorted_p3[-1] if _fy_sorted_p3 and _fy_sorted_p3[-1] not in complete_fys_p3 else None
+
+    # Build live subtitle
+    total_spend_all = float(_fy_spend.sum())
+    _sub_spend = " | ".join(f"{fy}: {fmt(_fy_spend.get(fy, 0))}" for fy in _fy_sorted_p3)
+
+    # Overall ROI trend string for the warning
+    rois_by_fy = {fy: (_fy_net.get(fy, 0) / _fy_spend[fy]) for fy in _fy_sorted_p3 if _fy_spend.get(fy, 0) > 0}
+    if len(rois_by_fy) >= 2:
+        rois_sorted = sorted(rois_by_fy.items())   # by FY alphabetically = chronological
+        first_fy, first_roi = rois_sorted[0]
+        last_fy,  last_roi  = rois_sorted[-1]
+        roi_trend_note = f"⚠️ ROI has moved from {first_roi:.1f}x ({first_fy}) to {last_roi:.1f}x ({last_fy}). " + \
+                         ("Spend is outpacing revenue growth — review promotional efficiency." if last_roi < first_roi
+                          else "Improving efficiency.")
+    else:
+        roi_trend_note = ""
+
+    st.markdown(note(
+        f"Activities database (FTTS). Total spend (all FYs) = {fmt(total_spend_all)}. "
+        f"Pakistan fiscal year (Jul–Jun). {_sub_spend}. {roi_trend_note}"
+    ), unsafe_allow_html=True)
+
+    # ── Filter by selected fiscal years (respects sidebar filter) ──
+    df_af = df_act[df_act["FiscalYear"].isin(fy_filter)].copy() if "FiscalYear" in df_act.columns else df_act.copy()
     if team_filter:
         df_af = df_af[df_af["RequestorTeams"].str.upper().isin([t.upper() for t in team_filter])]
 
-    total_sp = df_af["TotalAmount"].sum()
-    sp_24    = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
-    sp_25    = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
-    sp_26    = df_act[df_act["Yr"]==2026]["TotalAmount"].sum()
-    rev_24   = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
-    rev_25   = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
-    roi_24   = rev_24/sp_24 if sp_24>0 else 0
-    roi_25   = rev_25/sp_25 if sp_25>0 else 0
+    # ── 4 KPI cards (live values from SELECTED FYs) ──
+    total_sp_sel = float(df_af["TotalAmount"].sum())
+
+    # ROI cards for prior complete vs latest complete
+    def _roi_for(fy):
+        sp = float(_fy_spend.get(fy, 0))
+        rv = float(_fy_net.get(fy, 0))
+        return rv/sp if sp > 0 else 0
+
+    roi_prev = _roi_for(FY_PREV_P3) if FY_PREV_P3 else 0
+    roi_last = _roi_for(FY_LAST_P3) if FY_LAST_P3 else 0
+    roi_curr = _roi_for(FY_CURR_P3) if FY_CURR_P3 else 0
+
+    # Peak Spend FY (live)
+    if len(_fy_spend):
+        peak_fy = _fy_spend.idxmax()
+        peak_amt = _fy_spend.max()
+        peak_months = int(_fy_mo_act.get(peak_fy, 0))
+        peak_suffix = " (partial)" if peak_months < 12 else ""
+    else:
+        peak_fy, peak_amt, peak_suffix = "N/A", 0, ""
 
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Promo Spend",  fmt(total_sp))
-    c2.metric("ROI 2024", f"{roi_24:.1f}x", delta="Baseline")
-    c3.metric("ROI 2025", f"{roi_25:.1f}x", delta=f"{roi_25-roi_24:.1f}x vs 2024")
-    c4.metric("Peak Spend Year", "2025", delta="PKR 1.77B (+41.4%)")
+    c1.metric("Total Promo Spend (Selected FYs)", fmt(total_sp_sel))
+    if FY_PREV_P3:
+        c2.metric(f"ROI {FY_PREV_P3}", f"{roi_prev:.1f}x", delta="Baseline")
+    else:
+        c2.metric("ROI (Prior FY)", "N/A")
+    if FY_LAST_P3 and FY_PREV_P3:
+        c3.metric(f"ROI {FY_LAST_P3}", f"{roi_last:.1f}x",
+                  delta=f"{roi_last-roi_prev:+.1f}x vs {FY_PREV_P3}",
+                  delta_color="inverse")  # higher ROI is better, but negative delta = worse
+    elif FY_LAST_P3:
+        c3.metric(f"ROI {FY_LAST_P3}", f"{roi_last:.1f}x")
+    else:
+        c3.metric("ROI (Latest FY)", "N/A")
+    c4.metric("Peak Spend FY", peak_fy, delta=f"{fmt(peak_amt)}{peak_suffix}")
     st.markdown("---")
 
+    # ── Row A: Spend by FY + Activity Type Pie ──
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(sec("Promotional Spend by Year"), unsafe_allow_html=True)
-        st.markdown(note("2025 = highest investment year at PKR 1.77B. 2026 bar is partial Jan–Apr only."), unsafe_allow_html=True)
-        ysp = df_af.groupby("Yr")["TotalAmount"].sum().reset_index()
+        st.markdown(sec("Promotional Spend by Fiscal Year"), unsafe_allow_html=True)
+        # Live insight: which FY is peak, what's the growth trajectory
+        if len(complete_fys_p3) >= 2:
+            g = (_fy_spend[complete_fys_p3[-1]] - _fy_spend[complete_fys_p3[-2]]) / _fy_spend[complete_fys_p3[-2]] * 100
+            peak_label = f"{peak_fy}{peak_suffix}"
+            st.markdown(note(
+                f"Peak = {peak_label} at {fmt(peak_amt)}. "
+                f"{complete_fys_p3[-1]} spend +{g:.1f}% vs {complete_fys_p3[-2]}. "
+                f"FY25-26 bar (if shown) marked with * = partial."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Spend totals per fiscal year. * = partial fiscal year."), unsafe_allow_html=True)
+
+        ysp = df_af.groupby("FiscalYear")["TotalAmount"].sum().reset_index().sort_values("FiscalYear")
+        # Mark partial
+        ysp["FYLabel"] = ysp["FiscalYear"].apply(lambda fy: fy + (" *" if _fy_mo_act.get(fy, 0) < 12 else ""))
         ysp["Label"] = ysp["TotalAmount"].apply(fmt)
-        fig = px.bar(ysp, x="Yr", y="TotalAmount", text="Label",
+        fig = px.bar(ysp, x="FYLabel", y="TotalAmount", text="Label",
                      color_discrete_sequence=["#2c5f8a"])
         fig.update_traces(textposition="outside", textfont_size=12)
-        apply_layout(fig, height=300,
-            xaxis=dict(gridcolor="#eeeeee", tickmode="array", tickvals=ysp["Yr"].tolist()),
+        apply_layout(fig, height=310,
+            xaxis=dict(gridcolor="#eeeeee", title="Fiscal Year"),
             yaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"))
         st.plotly_chart(fig, use_container_width=True)
+
     with col2:
         st.markdown(sec("Where Does Money Go? (Activity Types)"), unsafe_allow_html=True)
-        st.markdown(note("Social/Cultural events and Equipment donations take the biggest shares — doctor engagement tools."), unsafe_allow_html=True)
-        asp = df_af.groupby("ActivityHead")["TotalAmount"].sum().nlargest(8).reset_index()
+        # Live top-2 activity types for the insight
+        ah_full = df_af.groupby("ActivityHead")["TotalAmount"].sum().sort_values(ascending=False)
+        if len(ah_full) >= 2:
+            ah_tot = ah_full.sum()
+            a1_name, a1_val = ah_full.index[0], ah_full.iloc[0]
+            a2_name, a2_val = ah_full.index[1], ah_full.iloc[1]
+            st.markdown(note(
+                f"Top category: <b>{a1_name}</b> ({a1_val/ah_tot*100:.1f}% of spend). "
+                f"2nd: <b>{a2_name}</b> ({a2_val/ah_tot*100:.1f}%). "
+                "These are the primary doctor-engagement channels."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Top activity categories by spend."), unsafe_allow_html=True)
+
+        asp = ah_full.head(8).reset_index()
         asp["Label"] = asp["ActivityHead"] + "<br>" + asp["TotalAmount"].apply(fmt)
         fig = px.pie(asp, values="TotalAmount", names="Label",
                      color_discrete_sequence=px.colors.qualitative.Set2)
         fig.update_traces(textinfo="percent+label", textfont_size=10)
-        apply_layout(fig, height=320)
+        apply_layout(fig, height=330)
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── Interactive Explorer ──
     st.markdown("---")
     st.markdown(sec("🔍 Promo Spend Explorer — Adjustable"), unsafe_allow_html=True)
     col_pf1, col_pf2, col_pf3 = st.columns(3)
@@ -962,7 +1050,9 @@ elif page == "💰 Promotional Analysis":
     else:
         pdata = df_af.groupby("Product")["TotalAmount"].sum().reset_index()
         pdata.columns = ["Name", "TotalAmount"]
-    pdata = pdata.sort_values("TotalAmount", ascending=asc_promo).head(n_promo)
+
+    # Filter out zeros for bottom view (avoids showing empty bars)
+    pdata = pdata[pdata["TotalAmount"] > 0].sort_values("TotalAmount", ascending=asc_promo).head(n_promo)
     pdata["Label"] = pdata["TotalAmount"].apply(fmt)
     cs_p = "Reds_r" if asc_promo else "Blues"
     fig = px.bar(pdata, x="TotalAmount", y="Name", orientation="h", text="Label",
@@ -974,53 +1064,107 @@ elif page == "💰 Promotional Analysis":
     st.plotly_chart(fig, use_container_width=True)
     st.markdown("---")
 
+    # ── Row B: Top/Bottom Teams by Spend ──
     col1, col2 = st.columns(2)
+
+    # Data quality flag: Unknown team share
+    unknown_share = 0
+    if not df_af.empty:
+        tot_team_spend = df_af["TotalAmount"].sum()
+        if tot_team_spend > 0:
+            unknown_val = df_af[df_af["RequestorTeams"].str.upper().str.strip().isin(["UNKNOWN",""])]["TotalAmount"].sum()
+            unknown_share = unknown_val / tot_team_spend * 100
+
     with col1:
         st.markdown(sec("Top 10 Teams — Highest Promo Spend"), unsafe_allow_html=True)
-        st.markdown(note("Bone Saviors leads spend. High spend is not always good — check ROI to verify returns."), unsafe_allow_html=True)
+        # Live insight: top team (excluding Unknown)
+        tsp_full = df_af.groupby("RequestorTeams")["TotalAmount"].sum().sort_values(ascending=False)
+        tsp_named = tsp_full[~tsp_full.index.str.upper().str.strip().isin(["UNKNOWN",""])]
+        if len(tsp_named) > 0:
+            top_team_name = tsp_named.index[0]
+            top_team_val  = tsp_named.iloc[0]
+            dq_note = f" ⚠️ Note: {unknown_share:.1f}% of spend has no team assigned (shown as 'Unknown')." if unknown_share > 5 else ""
+            st.markdown(note(
+                f"Highest-spending team: <b>{top_team_name}</b> ({fmt(top_team_val)}). "
+                "High spend is not always good — check ROI page to verify returns." + dq_note
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Top teams by promotional spend."), unsafe_allow_html=True)
+
         tsp = df_af.groupby("RequestorTeams")["TotalAmount"].sum().nlargest(10).reset_index()
         tsp["Label"] = tsp["TotalAmount"].apply(fmt)
         fig = px.bar(tsp, x="TotalAmount", y="RequestorTeams", orientation="h", text="Label",
                      color="TotalAmount", color_continuous_scale="Blues")
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=380, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
+
     with col2:
         st.markdown(sec("⚠️ Bottom 10 Teams — Lowest Promo Spend"), unsafe_allow_html=True)
-        st.markdown(note("Low spend may explain low sales. Management should check if these teams need more budget allocation."), unsafe_allow_html=True)
-        bsp = df_af.groupby("RequestorTeams")["TotalAmount"].sum().nsmallest(10).reset_index()
+        st.markdown(note(
+            "Low spend may explain low sales. Management should check if these teams need more "
+            "budget allocation — or if they're strategic teams with different metrics."
+        ), unsafe_allow_html=True)
+        bsp = df_af[df_af["TotalAmount"]>0].groupby("RequestorTeams")["TotalAmount"].sum()
+        bsp = bsp[bsp > 0].nsmallest(10).reset_index()
         bsp["Label"] = bsp["TotalAmount"].apply(fmt)
         fig = px.bar(bsp, x="TotalAmount", y="RequestorTeams", orientation="h", text="Label",
                      color="TotalAmount", color_continuous_scale="Reds_r")
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=380, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── Row C: Top Products by Investment + GL Heads ──
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("Top 10 Products — Highest Promo Investment"), unsafe_allow_html=True)
-        st.markdown(note("Avsar, Inosita Plus and Lowplat Plus get the most budget. Cross-check with ROI page to verify if justified."), unsafe_allow_html=True)
-        psp = df_af.groupby("Product")["TotalAmount"].sum().nlargest(10).reset_index()
+        # Live insight: top 3 products by promo spend
+        psp_full = df_af.groupby("Product")["TotalAmount"].sum().nlargest(10)
+        if len(psp_full) >= 3:
+            p1, p2, p3 = psp_full.index[0], psp_full.index[1], psp_full.index[2]
+            st.markdown(note(
+                f"Biggest investments: <b>{p1}</b>, <b>{p2}</b>, <b>{p3}</b>. "
+                "Cross-check with ROI page to verify if these deliver matching returns."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Products with highest promotional investment."), unsafe_allow_html=True)
+
+        psp = psp_full.reset_index()
         psp["Label"] = psp["TotalAmount"].apply(fmt)
         fig = px.bar(psp, x="TotalAmount", y="Product", orientation="h", text="Label",
                      color="TotalAmount", color_continuous_scale="Purples")
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=380, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
+
     with col2:
         st.markdown(sec("Budget by GL Head (Expense Category)"), unsafe_allow_html=True)
-        st.markdown(note("GL Head = General Ledger expense category. Equipment S&D is the biggest spend category."), unsafe_allow_html=True)
-        gl = df_af.groupby("GLHead")["TotalAmount"].sum().nlargest(8).reset_index()
+        # Live insight: top GL head
+        gl_full = df_af.groupby("GLHead")["TotalAmount"].sum().sort_values(ascending=False)
+        if len(gl_full) > 0:
+            gl_top_name = gl_full.index[0]
+            gl_top_val  = gl_full.iloc[0]
+            gl_tot = gl_full.sum()
+            st.markdown(note(
+                f"Top expense category: <b>{gl_top_name}</b> ({fmt(gl_top_val)} — "
+                f"{gl_top_val/gl_tot*100:.1f}% of total). GL Head = General Ledger expense category "
+                "used by PharmEvo accounting."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Top budget categories from the General Ledger."), unsafe_allow_html=True)
+
+        gl = gl_full.head(8).reset_index()
         gl["Label"] = gl["TotalAmount"].apply(fmt)
         fig = px.bar(gl, x="TotalAmount", y="GLHead", orientation="h", text="Label",
                      color="TotalAmount", color_continuous_scale="Oranges")
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=370, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=380, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
+
 
 # ════════════════════════════════════════════════════════════
 # PAGE 4: TRAVEL ANALYSIS
