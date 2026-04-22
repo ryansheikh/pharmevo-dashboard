@@ -1441,8 +1441,8 @@ elif page == "✈️ Travel Analysis":
 # ════════════════════════════════════════════════════════════
 elif page == "📦 Distribution Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>📦 Distribution Analysis — ZSDCY Database</h2>", unsafe_allow_html=True)
-    st.markdown(note("ZSDCY database — SAP delivery & billing records 2024–2025. Note: Premier Sales Pvt Ltd is Pharmevo's own distribution company. 2024: PKR 7.584B | 2025: PKR 9.762B (+28.7%)."), unsafe_allow_html=True)
 
+    # ── Live subtitle + FY context ──
     total_rev_z  = df_zsdcy["Revenue"].sum()
     total_qty_z  = df_zsdcy["Qty"].sum()
     total_cities = df_zsdcy["City"].nunique()
@@ -1450,34 +1450,65 @@ elif page == "📦 Distribution Analysis":
     total_prods  = df_zsdcy["Material Name"].nunique()
     rev24_z      = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum()
     rev25_z      = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum()
-    growth_z     = (rev25_z-rev24_z)/rev24_z*100
+    growth_z     = ((rev25_z-rev24_z)/rev24_z*100) if rev24_z > 0 else 0
     top_city     = df_zsdcy.groupby("City")["Revenue"].sum().idxmax()
     top_city_rev = df_zsdcy.groupby("City")["Revenue"].sum().max()
+    _zsdcy_yrs   = sorted(df_zsdcy["Yr"].dropna().unique())
+    _zsdcy_yr_str = " & ".join(str(int(y)) for y in _zsdcy_yrs)
+
+    st.markdown(note(
+        f"ZSDCY database — SAP delivery & billing records. Premier Sales Pvt Ltd is Pharmevo's own distribution company. "
+        f"Total revenue ({_zsdcy_yr_str}): {fmt(total_rev_z)}. "
+        f"2024: {fmt(rev24_z)} | 2025: {fmt(rev25_z)} ({growth_z:+.1f}%). "
+        "ℹ️ Note: This page uses calendar-year labels because the underlying ZSDCY CSV is calendar-year data. "
+        "Other pages use fiscal year (Jul–Jun). Unifying this to fiscal year requires regenerating the CSVs from raw Excel sources — planned as a future milestone."
+    ), unsafe_allow_html=True)
 
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Total Revenue",   fmt(total_rev_z),   "2024–2025 ZSDCY DB"), unsafe_allow_html=True)
+    c1.markdown(kpi("Total Revenue",   fmt(total_rev_z),   f"{_zsdcy_yr_str} ZSDCY DB"), unsafe_allow_html=True)
     c2.markdown(kpi("Total Units",     fmt_num(total_qty_z), "Units delivered"), unsafe_allow_html=True)
-    c3.markdown(kpi("Cities Covered",  str(total_cities),  "Unique cities"), unsafe_allow_html=True)
+    c3.markdown(kpi("Cities Covered",  str(total_cities),  "Unique cities/locations"), unsafe_allow_html=True)
     c4.markdown(kpi("Distributors",    str(total_sdps),    "Active SDP partners"), unsafe_allow_html=True)
-    c5.markdown(kpi("YoY Growth",      f"+{growth_z:.1f}%", "2024 → 2025"), unsafe_allow_html=True)
+    c5.markdown(kpi("YoY Growth",      f"{growth_z:+.1f}%", "2024 → 2025"), unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
     c1,c2,c3,c4,c5 = st.columns(5)
+    qty25 = df_zsdcy[df_zsdcy["Yr"]==2025]["Qty"].sum()
     c1.markdown(kpi("Revenue 2024",    fmt(rev24_z),       "Jan–Dec 2024"), unsafe_allow_html=True)
     c2.markdown(kpi("Revenue 2025",    fmt(rev25_z),       "Jan–Dec 2025"), unsafe_allow_html=True)
     c3.markdown(kpi("Unique SKUs",     str(total_prods),   "Product variants"), unsafe_allow_html=True)
     c4.markdown(kpi("Top City",        top_city,           fmt(top_city_rev)+" revenue"), unsafe_allow_html=True)
-    c5.markdown(kpi("Qty 2025",        fmt_num(df_zsdcy[df_zsdcy["Yr"]==2025]["Qty"].sum()), "28.9M units"), unsafe_allow_html=True)
+    c5.markdown(kpi("Qty 2025",        fmt_num(qty25),     f"{qty25/1e6:.1f}M units"), unsafe_allow_html=True)
     st.markdown("---")
 
+    # ── Category analysis (Bar + Pie) ──
     cat_map_d = {"P":"Pharma","N":"Nutraceutical","M":"Medical Device","H":"Herbal","E":"Export","O":"Other"}
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("📊 Revenue by Product Category"), unsafe_allow_html=True)
-        st.markdown(note("Pharma = 86.3%. Nutraceutical = 12.7% and growing +35.5% vs Pharma +28%."), unsafe_allow_html=True)
+
+        # Live-computed insight
         cat_rev = df_zsdcy.groupby("Category")["Revenue"].sum().reset_index()
         cat_rev["CategoryName"] = cat_rev["Category"].map(cat_map_d).fillna(cat_rev["Category"])
-        cat_rev["Label"] = cat_rev["Revenue"].apply(fmt)
         cat_rev = cat_rev.sort_values("Revenue", ascending=False)
+        tot = cat_rev["Revenue"].sum()
+
+        # Compute category growth for the insight
+        cat_yr_agg = df_zsdcy.groupby(["Category","Yr"])["Revenue"].sum().unstack(fill_value=0)
+        growth_str = ""
+        if 2024 in cat_yr_agg.columns and 2025 in cat_yr_agg.columns and len(cat_rev) >= 2:
+            cat_top  = cat_rev.iloc[0]["Category"]
+            cat_2nd  = cat_rev.iloc[1]["Category"]
+            g_top = ((cat_yr_agg.loc[cat_top,2025]-cat_yr_agg.loc[cat_top,2024]) / cat_yr_agg.loc[cat_top,2024] * 100) if cat_yr_agg.loc[cat_top,2024] > 0 else 0
+            g_2nd = ((cat_yr_agg.loc[cat_2nd,2025]-cat_yr_agg.loc[cat_2nd,2024]) / cat_yr_agg.loc[cat_2nd,2024] * 100) if cat_yr_agg.loc[cat_2nd,2024] > 0 else 0
+            name_top = cat_map_d.get(cat_top, cat_top)
+            name_2nd = cat_map_d.get(cat_2nd, cat_2nd)
+            pct_top = cat_rev.iloc[0]["Revenue"]/tot*100
+            pct_2nd = cat_rev.iloc[1]["Revenue"]/tot*100
+            growth_str = (f"<b>{name_top}</b> = {pct_top:.1f}% ({g_top:+.1f}% YoY). "
+                          f"<b>{name_2nd}</b> = {pct_2nd:.1f}% ({g_2nd:+.1f}% YoY).")
+        st.markdown(note(growth_str or "Revenue breakdown by product category."), unsafe_allow_html=True)
+
+        cat_rev["Label"] = cat_rev["Revenue"].apply(fmt)
         fig = px.bar(cat_rev, x="Revenue", y="CategoryName", orientation="h", text="Label",
                      color="Revenue", color_continuous_scale="Blues")
         fig.update_traces(textposition="outside", textfont_size=11)
@@ -1491,9 +1522,23 @@ elif page == "📦 Distribution Analysis":
         apply_layout(fig, height=300)
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── Monthly Revenue Trend ──
     st.markdown(sec("📈 Monthly Revenue Trend (ZSDCY)"), unsafe_allow_html=True)
-    st.markdown(note("Sep 2025 = PKR 1.03B — biggest single month! Clear upward trend from 2024 to 2025."), unsafe_allow_html=True)
+
+    # Live-computed insight: biggest single month
     monthly_z = df_zsdcy.groupby(["Yr","Mo"])["Revenue"].sum().reset_index()
+    if not monthly_z.empty:
+        peak_row = monthly_z.sort_values("Revenue", ascending=False).iloc[0]
+        peak_mo_name  = months_map.get(int(peak_row["Mo"]), str(int(peak_row["Mo"])))
+        peak_yr_val   = int(peak_row["Yr"])
+        peak_rev_val  = peak_row["Revenue"]
+        st.markdown(note(
+            f"Biggest single month: <b>{peak_mo_name} {peak_yr_val}</b> at {fmt(peak_rev_val)}. "
+            f"Upward trend confirmed: 2025 revenue +{growth_z:.1f}% vs 2024."
+        ), unsafe_allow_html=True)
+    else:
+        st.markdown(note("Monthly revenue trend across available years."), unsafe_allow_html=True)
+
     monthly_z["Date"]  = pd.to_datetime(monthly_z["Yr"].astype(int).astype(str)+"-"+monthly_z["Mo"].astype(int).astype(str)+"-01")
     monthly_z["Label"] = monthly_z["Revenue"].apply(fmt)
     fig = go.Figure()
@@ -1505,6 +1550,7 @@ elif page == "📦 Distribution Analysis":
                  yaxis=dict(gridcolor="#eeeeee", title="Revenue (M PKR)"), barmode="group")
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Top 20 Products + Fastest Growing ──
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("🏆 Top 20 Products by Revenue (SKU Level)"), unsafe_allow_html=True)
@@ -1519,9 +1565,24 @@ elif page == "📦 Distribution Analysis":
         st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.markdown(sec("🚀 Fastest Growing Products 2024→2025"), unsafe_allow_html=True)
-        st.markdown(note("Tiocap +157%! Finno-Q +123%! Confirmed across both DSR and ZSDCY databases."), unsafe_allow_html=True)
+
+        # Live insight — top 2 growers from data
         grow_top = df_zgrow[df_zgrow["Rev2024"]>10e6].nlargest(20,"Growth")
-        grow_top["Label"] = grow_top["Growth"].apply(lambda x: f"+{x:.0f}%")
+        if len(grow_top) >= 2:
+            g1 = grow_top.iloc[0]
+            g2 = grow_top.iloc[1]
+            # Short name (strip SKU suffix)
+            g1_short = str(g1["Material Name"]).split(" CAP")[0].split(" TAB")[0].split(" SAC")[0].split(" CRM")[0]
+            g2_short = str(g2["Material Name"]).split(" CAP")[0].split(" TAB")[0].split(" SAC")[0].split(" CRM")[0]
+            st.markdown(note(
+                f"<b>{g1_short} {g1['Growth']:+.0f}%</b> | <b>{g2_short} {g2['Growth']:+.0f}%</b>. "
+                "Confirmed across both DSR and ZSDCY databases. "
+                "These are emerging products deserving more promotional budget."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Fastest growing products between 2024 and 2025."), unsafe_allow_html=True)
+
+        grow_top["Label"] = grow_top["Growth"].apply(lambda x: f"{x:+.0f}%")
         grow_top["ShortName"] = grow_top["Material Name"].str[:35]
         colors_g = ["#2e7d32" if g>100 else "#2c5f8a" if g>50 else "#e65100" for g in grow_top["Growth"]]
         fig = go.Figure(go.Bar(x=grow_top["Growth"], y=grow_top["ShortName"], orientation="h",
@@ -1530,6 +1591,7 @@ elif page == "📦 Distribution Analysis":
                      xaxis=dict(gridcolor="#eeeeee", title="Growth % 2024→2025"))
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── City-Level Revenue Distribution ──
     st.markdown(sec("🗺️ City-Level Revenue Distribution"), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
@@ -1543,13 +1605,27 @@ elif page == "📦 Distribution Analysis":
         st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.markdown(sec("📈 City Growth 2024→2025"), unsafe_allow_html=True)
+
         city24 = df_zcity[df_zcity["Yr"]==2024].groupby("City")["Revenue"].sum()
         city25 = df_zcity[df_zcity["Yr"]==2025].groupby("City")["Revenue"].sum()
         city_g = pd.DataFrame({"2024":city24,"2025":city25}).dropna()
         city_g = city_g[city_g["2024"]>10e6]
         city_g["Growth"] = (city_g["2025"]-city_g["2024"])/city_g["2024"]*100
+
+        # Live insight
+        if len(city_g) >= 2:
+            top_cg = city_g.sort_values("Growth", ascending=False).head(2)
+            c1n = top_cg.index[0]; c1g = top_cg["Growth"].iloc[0]
+            c2n = top_cg.index[1]; c2g = top_cg["Growth"].iloc[1]
+            st.markdown(note(
+                f"Fastest-growing cities: <b>{c1n}</b> ({c1g:+.0f}%), <b>{c2n}</b> ({c2g:+.0f}%). "
+                "Shown: cities with >PKR 10M in 2024 baseline."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Cities sorted by 2024→2025 revenue growth."), unsafe_allow_html=True)
+
         city_g = city_g.sort_values("Growth",ascending=False).head(20).reset_index()
-        city_g["Label"] = city_g["Growth"].apply(lambda x: f"{x:.0f}%")
+        city_g["Label"] = city_g["Growth"].apply(lambda x: f"{x:+.0f}%")
         colors_cg = ["#2e7d32" if g>30 else "#2c5f8a" if g>0 else "#c62828" for g in city_g["Growth"]]
         fig = go.Figure(go.Bar(x=city_g["Growth"], y=city_g["City"], orientation="h",
             text=city_g["Label"], textposition="outside", textfont_size=10, marker_color=colors_cg))
@@ -1557,9 +1633,14 @@ elif page == "📦 Distribution Analysis":
                      xaxis=dict(gridcolor="#eeeeee", title="Revenue Growth %"))
         st.plotly_chart(fig, use_container_width=True)
 
-    # City expansion opportunity
+    # ── City Expansion Opportunity — THE strategic gold ──
     st.markdown(sec("🗺️ City Expansion Opportunity — Where to Open New Premier Sales Depots"), unsafe_allow_html=True)
-    st.markdown(note("Cities with ZSDCY revenue but low/zero field trip coverage = untapped markets. These are the best candidates for new Premier Sales depot openings."), unsafe_allow_html=True)
+    st.markdown(note(
+        "Cities with ZSDCY revenue but low/zero field-trip coverage = untapped markets. "
+        "These are the best candidates for new Premier Sales depot openings. "
+        "⚠️ Note: travel DB captures air/hotel trips only — local (intra-city) visits don't appear, "
+        "so Karachi and other head-office cities may show as 'zero trips' despite heavy local activity."
+    ), unsafe_allow_html=True)
     city_rev_exp  = df_zsdcy.groupby("City")["Revenue"].sum().reset_index()
     city_trips_exp= df_travel.groupby("VisitLocation")["TravelCount"].sum().reset_index()
     city_trips_exp.columns = ["City","Trips"]
@@ -1577,14 +1658,15 @@ elif page == "📦 Distribution Analysis":
     with col1:
         st.dataframe(city_exp_show[["City","Revenue","Trips","RevPerTrip","Opportunity"]], use_container_width=True, hide_index=True)
     with col2:
-        priority_cities = city_exp[city_exp["Opportunity"].str.contains("🔴|🟡")]
+        n_red    = len(city_exp[city_exp["Opportunity"].str.contains("🔴")])
+        n_yellow = len(city_exp[city_exp["Opportunity"].str.contains("🟡")])
         st.markdown(f"""<div class="manual-working">EXPANSION ANALYSIS
 ══════════════════════════
 Total cities tracked : {len(city_exp)}
-🔴 Top Priority cities : {len(city_exp[city_exp["Opportunity"].str.contains("🔴")])}
+🔴 Top Priority cities : {n_red}
    High rev, zero depot
 
-🟡 Expansion candidates: {len(city_exp[city_exp["Opportunity"].str.contains("🟡")])}
+🟡 Expansion candidates: {n_yellow}
    Good rev, few visits
 
 ACTION: Open 3-5 new Premier
@@ -1595,6 +1677,18 @@ Estimated revenue gain:
 PKR 150-200M new markets
 ══════════════════════════</div>""", unsafe_allow_html=True)
 
+    # Data quality flag — distributor names appearing in City column
+    suspect_cities = city_exp[city_exp["City"].str.contains(
+        r"DISTRIBUTOR|PHARMA|TRADERS|ENTERPRISES|MEDICAL COMPANY", case=False, na=False, regex=True
+    )]
+    if len(suspect_cities) > 0:
+        st.markdown(danger(
+            f"⚠️ Data quality: {len(suspect_cities)} entries in the 'City' column look like distributor/company names "
+            f"(e.g., {', '.join(suspect_cities['City'].head(3).tolist())}). These leaked from the SDP column during "
+            "ZSDCY import. Consider cleaning these before acting on depot-opening decisions."
+        ), unsafe_allow_html=True)
+
+    # ── Top 20 SDPs (Depots) ──
     st.markdown(sec("🏢 Top 20 Premier Sales Depots (SDPs) by Revenue — Own Distribution Network"), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
@@ -1618,6 +1712,7 @@ PKR 150-200M new markets
         apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Unique Products"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
+
 
 # ════════════════════════════════════════════════════════════
 # ════════════════════════════════════════════════════════════
