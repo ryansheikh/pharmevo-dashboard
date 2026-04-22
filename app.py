@@ -112,30 +112,71 @@ def load_data():
     dsr  = get_dsr_connection()
     ftts = get_ftts_connection()
 
-    # DSR: SALES — using VW_Sales view (has TeamName, ProductName, ValueNp, Units, Discount)
+    # DSR: SALES — VW_Sales (FY23-24 H2 onwards) UNION'd with 18 archive views for FY22-23 + FY23-24 H1.
+    # Archive views are needed because VW_Sales main only holds Jan 2024+.
+    # Where "_New" variant exists, it's the corrected/final pricing — prefer it over the base view.
+    ARCHIVE_VIEWS = [
+        # FY22-23 (Jul 2022 → Jun 2023)
+        "VW_Sales_Jul2022_New", "VW_Sales_Aug2022_New", "VW_Sales_Sep2022_New",
+        "VW_Sales_Oct2022",     "VW_Sales_Nov2022_New", "VW_Sales_Dec2022",
+        "VW_Sales_Jan2023_New", "VW_Sales_Feb2023_New", "VW_Sales_Mar2023",
+        "VW_Sales_Apr2023_New", "VW_Sales_May2023",     "VW_Sales_Jun2023",
+        # FY23-24 H1 (Jul 2023 → Dec 2023) — no _New variants exist for these
+        "VW_Sales_July2023",    "VW_Sales_Aug2023",     "VW_Sales_Sep2023",
+        "VW_Sales_Oct2023",     "VW_Sales_Nov2023",     "VW_Sales_Dec2023",
+    ]
+
+    def _sales_query(view):
+        return f"""
+            SELECT YEAR(InvoiceDate) AS Yr, MONTH(InvoiceDate) AS Mo,
+                   CAST(InvoiceDate AS DATE) AS Date,
+                   ISNULL(TeamName,'Unknown')    AS TeamName,
+                   ISNULL(ProductName,'Unknown') AS ProductName,
+                   ISNULL(SaleFlag,'S')          AS SaleFlag,
+                   SUM(ISNULL(ValueNp,0))   AS TotalRevenue,
+                   SUM(ISNULL(Discount,0))  AS TotalDiscount,
+                   SUM(ISNULL(Units,0))     AS TotalUnits,
+                   COUNT(DISTINCT InvoiceNo) AS InvoiceCount
+            FROM {view} WITH (NOLOCK)
+            WHERE InvoiceDate IS NOT NULL
+            GROUP BY YEAR(InvoiceDate), MONTH(InvoiceDate),
+                     CAST(InvoiceDate AS DATE), TeamName, ProductName, SaleFlag
+        """
+
+    sales_parts = []
+    archive_failures = []
     if dsr:
+        # 1) Main view — FY23-24 H2 through present
         try:
-            ds = pd.read_sql("""
-                SELECT YEAR(InvoiceDate) AS Yr, MONTH(InvoiceDate) AS Mo,
-                       CAST(InvoiceDate AS DATE) AS Date,
-                       ISNULL(TeamName,'Unknown')    AS TeamName,
-                       ISNULL(ProductName,'Unknown') AS ProductName,
-                       ISNULL(SaleFlag,'S')          AS SaleFlag,
-                       SUM(ISNULL(ValueNp,0))   AS TotalRevenue,
-                       SUM(ISNULL(Discount,0))  AS TotalDiscount,
-                       SUM(ISNULL(Units,0))     AS TotalUnits,
-                       COUNT(DISTINCT InvoiceNo) AS InvoiceCount
-                FROM VW_Sales
-                WHERE InvoiceDate IS NOT NULL
-                  AND YEAR(InvoiceDate) >= 2020
-                GROUP BY YEAR(InvoiceDate), MONTH(InvoiceDate),
-                         CAST(InvoiceDate AS DATE), TeamName, ProductName, SaleFlag
-                ORDER BY Yr, Mo
-            """, dsr)
-        except:
+            main_df = pd.read_sql(_sales_query("VW_Sales") + " ORDER BY Yr, Mo", dsr)
+            sales_parts.append(main_df)
+        except Exception as e:
+            archive_failures.append(("VW_Sales (main)", str(e)[:80]))
+
+        # 2) Archive views — loop, retry once on timeout
+        import time as _t
+        for v in ARCHIVE_VIEWS:
+            for attempt in range(2):
+                try:
+                    part = pd.read_sql(_sales_query(v), dsr)
+                    sales_parts.append(part)
+                    break
+                except Exception as e:
+                    if attempt == 0:
+                        _t.sleep(3)   # brief pause, retry once
+                    else:
+                        archive_failures.append((v, str(e)[:80]))
+
+        if sales_parts:
+            ds = pd.concat(sales_parts, ignore_index=True)
+        else:
             ds = pd.read_csv("sales_clean.csv")
     else:
         ds = pd.read_csv("sales_clean.csv")
+
+    # Surface any archive-view failures at the top of the page (non-fatal)
+    if archive_failures:
+        st.session_state["_sales_archive_failures"] = archive_failures
 
     # FTTS: ACTIVITIES — Verified correct query (April 13, 2026)
     # RequestID = RequestMasterId join key, RequestTypeID=1 = Activity
@@ -260,6 +301,35 @@ df_zsdcy, df_zprod, df_zcity, df_zsdp, df_zgrow     = load_zsdcy()
 months_map = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
               7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
 
+# ── FISCAL YEAR (Pakistan: Jul 1 → Jun 30) ──────────────────
+# Jul 2024 → Jun 2025 is displayed as "FY24-25"
+def to_fiscal_year_from_ym(y, m):
+    if pd.isna(y) or pd.isna(m): return None
+    y, m = int(y), int(m)
+    if m >= 7:  return f"FY{str(y)[2:]}-{str(y+1)[2:]}"
+    return f"FY{str(y-1)[2:]}-{str(y)[2:]}"
+
+def to_fiscal_month(m):
+    # Jul=1, Aug=2, ..., Jun=12
+    if pd.isna(m): return None
+    return int(((int(m) - 7) % 12) + 1)
+
+# Attach FiscalYear + FiscalMonth to each live dataframe using existing Yr/Mo columns
+for _df in (df_sales, df_act):
+    if "Yr" in _df.columns and "Mo" in _df.columns:
+        _df["FiscalYear"]  = _df.apply(lambda r: to_fiscal_year_from_ym(r["Yr"], r["Mo"]), axis=1)
+        _df["FiscalMonth"] = _df["Mo"].apply(to_fiscal_month)
+if "Yr" in df_travel.columns and "Mo" in df_travel.columns:
+    df_travel["FiscalYear"]  = df_travel.apply(lambda r: to_fiscal_year_from_ym(r["Yr"], r["Mo"]), axis=1)
+    df_travel["FiscalMonth"] = df_travel["Mo"].apply(to_fiscal_month)
+
+fiscal_month_order = [7,8,9,10,11,12,1,2,3,4,5,6]   # calendar months in fiscal order
+fiscal_month_labels = ["Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun"]
+
+# Sorted list of all FYs present in sales data + sensible default (last 4)
+_all_fys = sorted([fy for fy in df_sales["FiscalYear"].dropna().unique()])
+_default_fys = _all_fys[-4:] if len(_all_fys) >= 4 else _all_fys
+
 # ── HELPERS ──────────────────────────────────────────────────
 def fmt(val):
     if val >= 1e9:   return f"PKR {val/1e9:.1f}B"
@@ -316,15 +386,22 @@ page = st.sidebar.radio("Navigate to", [
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Filters")
-year_filter = st.sidebar.multiselect("Year(s)",
-    options=sorted(df_sales["Yr"].unique()),
-    default=sorted(df_sales["Yr"].unique()))
+fy_filter = st.sidebar.multiselect("Fiscal Year(s) — Pakistan (Jul–Jun)",
+    options=_all_fys,
+    default=_default_fys,
+    help="Pakistan FY: Jul 1 → Jun 30. FY24-25 = Jul 2024 → Jun 2025.")
 team_filter = st.sidebar.multiselect("Team(s)",
     options=sorted(df_sales["TeamName"].unique()), default=[])
 
-df_s = df_sales[df_sales["Yr"].isin(year_filter)]
-df_a = df_act[df_act["Yr"].isin(year_filter)]
-df_t = df_travel[df_travel["Yr"].isin(year_filter)]
+# Primary filter: FiscalYear
+df_s = df_sales[df_sales["FiscalYear"].isin(fy_filter)]
+df_a = df_act[df_act["FiscalYear"].isin(fy_filter)] if "FiscalYear" in df_act.columns else df_act.copy()
+df_t = df_travel[df_travel["FiscalYear"].isin(fy_filter)] if "FiscalYear" in df_travel.columns else df_travel.copy()
+
+# Backward-compat: year_filter for not-yet-migrated pages (Sales, Promo, Travel, etc.)
+# Derived from selected fiscal years (FY24-25 contributes cal years 2024 AND 2025).
+year_filter = sorted(df_s["Yr"].dropna().unique().tolist())
+
 if team_filter:
     df_s = df_s[df_s["TeamName"].isin(team_filter)]
     df_a = df_a[df_a["RequestorTeams"].str.upper().isin([t.upper() for t in team_filter])]
@@ -334,77 +411,226 @@ if team_filter:
 # ════════════════════════════════════════════════════════════
 if page == "🏠 Executive Summary":
     st.markdown("<h1 style='color:#2c5f8a'>💊 Pharmevo Business Intelligence Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666'>4 Databases | Sales + Promotions + Travel + Distribution | 2024–2026 | Live SQL Server</p>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#666'>4 Databases | Sales + Promotions + Travel + Distribution | FY22-23 to FY25-26 | Live SQL Server</p>", unsafe_allow_html=True)
+
+    # Show any archive-view load failures (non-fatal)
+    _fails = st.session_state.get("_sales_archive_failures", [])
+    if _fails:
+        st.warning(f"⚠️ Partial data: {len(_fails)} archive view(s) failed to load — "
+                   f"{', '.join(v for v,_ in _fails[:5])}. Dashboard totals reflect only successfully-loaded views.")
     st.markdown("---")
 
-    rev_2025    = df_sales[df_sales["Yr"]==2025]["TotalRevenue"].sum()
-    rev_2024    = df_sales[df_sales["Yr"]==2024]["TotalRevenue"].sum()
-    rev_2026    = df_sales[df_sales["Yr"]==2026]["TotalRevenue"].sum()
-    rev_overall = df_sales["TotalRevenue"].sum()
-    units_2025  = df_sales[df_sales["Yr"]==2025]["TotalUnits"].sum()
-    units_overall = df_sales["TotalUnits"].sum()
-    spend_2024  = df_act[df_act["Yr"]==2024]["TotalAmount"].sum()
-    spend_2025  = df_act[df_act["Yr"]==2025]["TotalAmount"].sum()
-    spend_overall = df_act["TotalAmount"].sum()
-    roi_2025    = rev_2025/spend_2025 if spend_2025>0 else 0
-    roi_overall = rev_overall/spend_overall if spend_overall>0 else 0
-    roi_2024    = rev_2024/spend_2024 if spend_2024>0 else 0
-    trips_overall = df_travel["TravelCount"].sum()
-    trips_2025  = df_travel[df_travel["Yr"]==2025]["TravelCount"].sum()
-    yoy_growth  = (rev_2025-rev_2024)/rev_2024*100
+    # ═══ Data scope info ═══
+    _fy_sorted = sorted(df_sales["FiscalYear"].dropna().unique())
+    FY_CURR = _fy_sorted[-1] if len(_fy_sorted) >= 1 else None       # e.g. "FY25-26" (partial)
+    FY_LAST = _fy_sorted[-2] if len(_fy_sorted) >= 2 else None       # e.g. "FY24-25" (latest complete)
+    FY_PREV = _fy_sorted[-3] if len(_fy_sorted) >= 3 else None       # e.g. "FY23-24"
+
+    # How many months does each FY have? Needed for apples-to-apples comparisons
+    _fy_months = df_sales.groupby("FiscalYear")["Mo"].nunique()
+    curr_fy_mo_count = int(_fy_months.get(FY_CURR, 0))
+
+    # ═══ Helpers — scoped sums by FY and SaleFlag ═══
+    def _rev(df, fy, flag=None, col="TotalRevenue"):
+        """Revenue sum for a given FY, optionally filtered by SaleFlag ('S','R','I','Q')."""
+        if fy is None or df.empty: return 0.0
+        d = df[df["FiscalYear"] == fy]
+        if flag is not None and "SaleFlag" in d.columns:
+            if isinstance(flag, (list, tuple, set)):
+                d = d[d["SaleFlag"].isin(flag)]
+            else:
+                d = d[d["SaleFlag"] == flag]
+        return float(d[col].sum())
+
+    def _rev_same_months(df, fy, months_cap, flag=None, col="TotalRevenue"):
+        """Revenue for FY, but only fiscal months 1..months_cap (for apples-to-apples partial-year compare)."""
+        if fy is None or df.empty or months_cap <= 0: return 0.0
+        d = df[(df["FiscalYear"] == fy) & (df["FiscalMonth"] <= months_cap)]
+        if flag is not None and "SaleFlag" in d.columns:
+            if isinstance(flag, (list, tuple, set)):
+                d = d[d["SaleFlag"].isin(flag)]
+            else:
+                d = d[d["SaleFlag"] == flag]
+        return float(d[col].sum())
+
+    # ═══ ROW 1 — Overall Totals (all FYs combined) ═══
+    gross_all  = float(df_sales[df_sales["SaleFlag"]=="S"]["TotalRevenue"].sum()) if "SaleFlag" in df_sales.columns else 0
+    ret_all    = float(df_sales[df_sales["SaleFlag"]=="R"]["TotalRevenue"].sum()) if "SaleFlag" in df_sales.columns else 0
+    net_all    = gross_all + ret_all       # returns are stored as negative
+    units_all  = float(df_sales[df_sales["SaleFlag"]=="S"]["TotalUnits"].sum()) if "SaleFlag" in df_sales.columns else float(df_sales["TotalUnits"].sum())
+    ret_rate   = (abs(ret_all) / gross_all * 100) if gross_all > 0 else 0
+    spend_all  = float(df_act["TotalAmount"].sum())
+    roi_all    = net_all / spend_all if spend_all > 0 else 0
+    trips_all  = float(df_travel["TravelCount"].sum()) if "TravelCount" in df_travel.columns else 0
+
+    # ═══ ROW 2 — FY24-25 (latest complete) and YoY vs FY23-24 ═══
+    gross_last = _rev(df_sales, FY_LAST, flag="S")
+    ret_last   = _rev(df_sales, FY_LAST, flag="R")
+    net_last   = gross_last + ret_last
+    units_last = _rev(df_sales, FY_LAST, flag="S", col="TotalUnits")
+    spend_last = _rev(df_act,   FY_LAST, col="TotalAmount")
+    roi_last   = net_last / spend_last if spend_last > 0 else 0
+    trips_last = _rev(df_travel, FY_LAST, col="TravelCount")
+
+    gross_prev = _rev(df_sales, FY_PREV, flag="S")
+    ret_prev   = _rev(df_sales, FY_PREV, flag="R")
+    net_prev   = gross_prev + ret_prev
+    spend_prev = _rev(df_act,   FY_PREV, col="TotalAmount")
+    roi_prev   = net_prev / spend_prev if spend_prev > 0 else 0
+
+    yoy_gross = ((gross_last-gross_prev)/gross_prev*100) if gross_prev > 0 else 0
+    yoy_net   = ((net_last-net_prev)/net_prev*100) if net_prev > 0 else 0
+
+    # ═══ ROW 3 — FY25-26 (current partial) + Records ═══
+    gross_curr = _rev(df_sales, FY_CURR, flag="S")
+    net_curr   = gross_curr + _rev(df_sales, FY_CURR, flag="R")
+    # Apples-to-apples: compare FY25-26 first N months vs FY24-25 first N months
+    net_curr_same = _rev_same_months(df_sales, FY_CURR, curr_fy_mo_count, flag=["S","R"])
+    net_last_same = _rev_same_months(df_sales, FY_LAST, curr_fy_mo_count, flag=["S","R"])
+    yoy_apples    = ((net_curr_same - net_last_same)/net_last_same*100) if net_last_same > 0 else 0
+
+    # Top product (by gross sales)
+    if "SaleFlag" in df_s.columns and not df_s.empty:
+        _gp = df_s[df_s["SaleFlag"]=="S"].groupby("ProductName")["TotalRevenue"].sum()
+    else:
+        _gp = df_s.groupby("ProductName")["TotalRevenue"].sum() if not df_s.empty else pd.Series(dtype=float)
+    top_prod_name = _gp.idxmax() if not _gp.empty else "N/A"
+    top_prod_rev  = _gp.max() if not _gp.empty else 0
+
+    # Best ROI product — from pre-computed df_roi (sales vs activities spend)
+    if not df_roi.empty:
+        _r = df_roi[(df_roi["TotalPromoSpend"] > 1_000_000) & (df_roi["TotalRevenue"] > 10_000_000)].copy()
+        if not _r.empty:
+            best_roi_row = _r.sort_values("ROI", ascending=False).iloc[0]
+            best_roi_name = best_roi_row["ProductName"]
+            best_roi_val  = best_roi_row["ROI"]
+        else:
+            best_roi_name, best_roi_val = "N/A", 0
+    else:
+        best_roi_name, best_roi_val = "N/A", 0
+
+    # Top city — from ZSDCY (latest FY available in that dataset)
+    if not df_zcity.empty and "City" in df_zcity.columns and "Revenue" in df_zcity.columns:
+        _c = df_zcity.groupby("City")["Revenue"].sum().sort_values(ascending=False)
+        top_city_name = _c.index[0] if len(_c) else "N/A"
+        top_city_rev  = _c.iloc[0] if len(_c) else 0
+    else:
+        top_city_name, top_city_rev = "N/A", 0
 
     st.markdown("### 📊 Key Performance Indicators — Company Overview")
-    st.markdown(note("All KPIs verified from live SQL Server as of April 13, 2026. Row 1 = Overall 2024-2026. Row 2 = 2025 full year. Row 3 = Company records."), unsafe_allow_html=True)
+    st.markdown(note(
+        f"Pakistan fiscal year (Jul–Jun). Gross Sales = SaleFlag 'S'. Net Sales = S + R (after returns). "
+        f"Both shown so you can align with the official PharmEvo reporting convention. "
+        f"Data includes {len(_fy_sorted)} fiscal years; FY22-23 backfilled from {18} monthly archive views."
+    ), unsafe_allow_html=True)
 
-    st.markdown("**📅 Overall Totals — 2024 to 2026**")
+    # ── Row 1: Overall Totals ──
+    st.markdown("**📅 Overall Totals — All Fiscal Years**")
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Total Revenue", fmt(rev_overall), "2024+2025+2026 combined"), unsafe_allow_html=True)
-    c2.markdown(kpi("Total Units Sold", fmt_num(units_overall), "All products 2024–2026"), unsafe_allow_html=True)
-    c3.markdown(kpi("Total Promo Spend", fmt(spend_overall), "2024–2026 activities"), unsafe_allow_html=True)
-    c4.markdown(kpi("Overall ROI", f"{roi_overall:.1f}x", "PKR 1 spent = PKR 18.6 earned"), unsafe_allow_html=True)
-    c5.markdown(kpi("Total Field Trips", fmt_num(trips_overall), "Field visits 2024–2026"), unsafe_allow_html=True)
+    c1.markdown(kpi("Gross Sales (All FYs)", fmt(gross_all), "SaleFlag = 'S' (pharma standard)"), unsafe_allow_html=True)
+    c2.markdown(kpi("Net Sales (All FYs)",   fmt(net_all),   f"After returns ({ret_rate:.1f}% return rate)"), unsafe_allow_html=True)
+    c3.markdown(kpi("Return Rate", f"{ret_rate:.1f}%", fmt(abs(ret_all)) + " total returns"), unsafe_allow_html=True)
+    c4.markdown(kpi("Total Promo Spend", fmt(spend_all), "All activities, all FYs"), unsafe_allow_html=True)
+    c5.markdown(kpi("Overall ROI", f"{roi_all:.1f}x", f"Net Sales ÷ Spend | {fmt_num(trips_all)} field trips"), unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**📅 Latest Complete Year — 2025**")
+    # ── Row 2: FY24-25 latest complete ──
+    st.markdown(f"<br>**📅 Latest Complete Fiscal Year — {FY_LAST}**", unsafe_allow_html=True)
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Revenue 2025", fmt(rev_2025), f"↑ +{yoy_growth:.1f}% vs 2024"), unsafe_allow_html=True)
-    c2.markdown(kpi("Units Sold 2025", fmt_num(units_2025), "Jan–Dec 2025"), unsafe_allow_html=True)
-    c3.markdown(kpi("Promo Spend 2025", fmt(spend_2025), f"↑ +{(spend_2025-spend_2024)/spend_2024*100:.1f}% vs 2024"), unsafe_allow_html=True)
-    c4.markdown(kpi("ROI 2025", f"{roi_2025:.1f}x", "⚠️ Down from 16.2x in 2024", red=True), unsafe_allow_html=True)
-    c5.markdown(kpi("Trips 2025", fmt_num(trips_2025), "Field visits Jan–Dec 2025"), unsafe_allow_html=True)
+    c1.markdown(kpi(f"Gross Sales {FY_LAST}", fmt(gross_last),
+                    f"{'+' if yoy_gross>=0 else ''}{yoy_gross:.1f}% YoY vs {FY_PREV}",
+                    red=(yoy_gross<0)), unsafe_allow_html=True)
+    c2.markdown(kpi(f"Net Sales {FY_LAST}", fmt(net_last),
+                    f"{'+' if yoy_net>=0 else ''}{yoy_net:.1f}% YoY vs {FY_PREV}",
+                    red=(yoy_net<0)), unsafe_allow_html=True)
+    c3.markdown(kpi(f"Units {FY_LAST}", fmt_num(units_last), "Gross units sold"), unsafe_allow_html=True)
+    c4.markdown(kpi(f"ROI {FY_LAST}", f"{roi_last:.1f}x",
+                    f"{'↑' if roi_last>=roi_prev else '↓'} from {roi_prev:.1f}x ({FY_PREV})",
+                    red=(roi_last < roi_prev)), unsafe_allow_html=True)
+    c5.markdown(kpi(f"Trips {FY_LAST}", fmt_num(trips_last), "Field visits Jul–Jun"), unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("**🏆 Company Records & Highlights**")
+    # ── Row 3: Current FY + records ──
+    st.markdown(f"<br>**📅 Current Fiscal Year ({FY_CURR}) & Company Records**", unsafe_allow_html=True)
     c1,c2,c3,c4,c5 = st.columns(5)
-    top_prod     = df_s.groupby("ProductName")["TotalRevenue"].sum().idxmax()
-    top_prod_rev = df_s.groupby("ProductName")["TotalRevenue"].sum().max()
-    top_team     = df_s.groupby("TeamName")["TotalRevenue"].sum().idxmax()
-    top_team_rev = df_s.groupby("TeamName")["TotalRevenue"].sum().max()
-    c1.markdown(kpi("Top Product", top_prod, fmt(top_prod_rev)+" revenue"), unsafe_allow_html=True)
-    c2.markdown(kpi("Top Sales Team", top_team, fmt(top_team_rev)+" revenue"), unsafe_allow_html=True)
-    c3.markdown(kpi("Best ROI Product", "Ramipace", "48.0x ROI — verified from raw data"), unsafe_allow_html=True)
-    c4.markdown(kpi("Top Revenue City", "Karachi", "PKR 872M — ZSDCY DB"), unsafe_allow_html=True)
-    c5.markdown(kpi("2026 YTD (Apr 13)", fmt(rev_2026), "⚠️ Jan–Apr 12, 2026 partial only", red=True), unsafe_allow_html=True)
+    c1.markdown(kpi(f"{FY_CURR} Net Sales YTD", fmt(net_curr),
+                    f"⚠️ Partial: {curr_fy_mo_count}/12 fiscal months", red=True), unsafe_allow_html=True)
+    c2.markdown(kpi(f"{FY_CURR} vs {FY_LAST} (same months)",
+                    f"{'+' if yoy_apples>=0 else ''}{yoy_apples:.1f}%",
+                    f"Apples-to-apples: Jul–{fiscal_month_labels[curr_fy_mo_count-1]}",
+                    red=(yoy_apples<0)), unsafe_allow_html=True)
+    c3.markdown(kpi("Top Product", top_prod_name, fmt(top_prod_rev) + " gross"), unsafe_allow_html=True)
+    c4.markdown(kpi("Best ROI Product", best_roi_name, f"{best_roi_val:.1f}x ROI"), unsafe_allow_html=True)
+    c5.markdown(kpi("Top Revenue City", top_city_name, fmt(top_city_rev) + " (ZSDCY)"), unsafe_allow_html=True)
 
-    # Revenue Trend
-    st.markdown(sec("📈 Revenue Trend (Monthly) — Updated April 13, 2026"), unsafe_allow_html=True)
-    st.markdown(note("Live from SQL Server. Blue = actual revenue 2024–2025. Orange dashed = 2026 partial year (Jan–Apr). Upward trend confirms strong business growth."), unsafe_allow_html=True)
-    monthly  = df_s.groupby("Date")["TotalRevenue"].sum().reset_index()
-    complete = monthly[monthly["Date"].dt.year < 2026]
-    partial  = monthly[monthly["Date"].dt.year >= 2026]
+    # ═══ Revenue Trend — 3 FYs overlaid, fiscal-month axis ═══
+    st.markdown(sec("📈 Revenue Trend by Fiscal Month — Last 3 FYs Overlaid"), unsafe_allow_html=True)
+    st.markdown(note(
+        "X-axis = fiscal months (Jul → Jun). Compare same fiscal months across years. "
+        f"{FY_CURR} (orange dashed) is the current partial year. Revenue shown is Net Sales (S + R)."
+    ), unsafe_allow_html=True)
+
+    _trend_fys = [fy for fy in [FY_PREV, FY_LAST, FY_CURR] if fy is not None]
+    _trend_src = df_s[df_s["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_s.columns else df_s
+    trend = (_trend_src[_trend_src["FiscalYear"].isin(_trend_fys)]
+             .groupby(["FiscalYear","FiscalMonth"])["TotalRevenue"].sum()
+             .reset_index())
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=complete["Date"], y=complete["TotalRevenue"]/1e6,
-        name="Monthly Revenue", line=dict(color="#2c5f8a", width=2.5),
-        fill="tozeroy", fillcolor="rgba(44,95,138,0.08)", mode="lines+markers",
-        marker=dict(size=5), hovertemplate="%{x|%b %Y}: PKR %{y:.1f}M<extra></extra>"))
-    fig.add_trace(go.Scatter(x=partial["Date"], y=partial["TotalRevenue"]/1e6,
-        name="2026 (Jan–Apr Partial)", line=dict(color="#e65100", width=2.5, dash="dash"),
-        mode="lines+markers", marker=dict(size=7, color="#e65100"),
-        hovertemplate="%{x|%b %Y}: PKR %{y:.1f}M (partial)<extra></extra>"))
-    apply_layout(fig, height=300, hovermode="x unified",
-        yaxis=dict(gridcolor="#eeeeee", title="Revenue (M PKR)"),
-        legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
+    colors = {FY_PREV: "#9aa5b1", FY_LAST: "#2c5f8a", FY_CURR: "#e65100"}
+    dashes = {FY_PREV: "dot",     FY_LAST: "solid",   FY_CURR: "dash"}
+    for fy in _trend_fys:
+        sub = trend[trend["FiscalYear"]==fy].sort_values("FiscalMonth")
+        if sub.empty: continue
+        # Map fiscal month number → label
+        x_labels = [fiscal_month_labels[int(m)-1] for m in sub["FiscalMonth"]]
+        fig.add_trace(go.Scatter(
+            x=x_labels, y=sub["TotalRevenue"]/1e6,
+            name=fy + (" (partial)" if fy == FY_CURR else ""),
+            mode="lines+markers",
+            line=dict(color=colors.get(fy, "#666"), width=2.5, dash=dashes.get(fy,"solid")),
+            marker=dict(size=6),
+            hovertemplate=f"{fy} %{{x}}: PKR %{{y:.1f}}M<extra></extra>"
+        ))
+    apply_layout(fig, height=340, hovermode="x unified",
+                 xaxis=dict(title="Fiscal Month", categoryorder="array", categoryarray=fiscal_month_labels),
+                 yaxis=dict(title="Net Sales (M PKR)", gridcolor="#eeeeee"),
+                 legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
     st.plotly_chart(fig, use_container_width=True)
+
+    # ═══ Return Rate by Month — quality monitor ═══
+    st.markdown(sec("📉 Return Rate by Fiscal Month — Quality Monitor"), unsafe_allow_html=True)
+    st.markdown(note("Returns as % of gross sales. Pharma norm is 1–3%. Spikes above 3% may signal product quality or distribution issues."), unsafe_allow_html=True)
+
+    if "SaleFlag" in df_s.columns and not df_s.empty:
+        last_fys = _trend_fys
+        rr = df_s[df_s["FiscalYear"].isin(last_fys)].copy()
+        g = rr[rr["SaleFlag"]=="S"].groupby(["FiscalYear","FiscalMonth"])["TotalRevenue"].sum().rename("gross")
+        r = rr[rr["SaleFlag"]=="R"].groupby(["FiscalYear","FiscalMonth"])["TotalRevenue"].sum().rename("ret")
+        rr_df = pd.concat([g, r], axis=1).reset_index()
+        rr_df["ret"] = rr_df["ret"].fillna(0)
+        rr_df["gross"] = rr_df["gross"].fillna(0)
+        rr_df = rr_df[rr_df["gross"] > 0]
+        rr_df["rate"] = (rr_df["ret"].abs() / rr_df["gross"]) * 100
+
+        fig2 = go.Figure()
+        for fy in _trend_fys:
+            sub = rr_df[rr_df["FiscalYear"]==fy].sort_values("FiscalMonth")
+            if sub.empty: continue
+            x_labels = [fiscal_month_labels[int(m)-1] for m in sub["FiscalMonth"]]
+            fig2.add_trace(go.Scatter(
+                x=x_labels, y=sub["rate"].round(2),
+                name=fy, mode="lines+markers",
+                line=dict(color=colors.get(fy, "#666"), width=2, dash=dashes.get(fy,"solid")),
+                hovertemplate=f"{fy} %{{x}}: %{{y:.2f}}% return<extra></extra>"
+            ))
+        fig2.add_hline(y=3.0, line_dash="dot", line_color="red",
+                       annotation_text="3% alert threshold", annotation_position="top right")
+        apply_layout(fig2, height=250, hovermode="x unified",
+                     xaxis=dict(title="Fiscal Month", categoryorder="array", categoryarray=fiscal_month_labels),
+                     yaxis=dict(title="Return Rate (%)", gridcolor="#eeeeee"),
+                     legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("Return-rate chart requires SaleFlag data (not available in this load).")
 
     # Filterable charts
     st.markdown("---")
@@ -450,46 +676,94 @@ if page == "🏠 Executive Summary":
 # ════════════════════════════════════════════════════════════
 elif page == "📈 Sales Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>📈 Sales Deep Analysis</h2>", unsafe_allow_html=True)
-    st.markdown(note("Revenue, units and invoices from DSR Sales Database. 2024: PKR 20.21B | 2025: PKR 23.56B | 2026 YTD (Apr 12): PKR 6.85B."), unsafe_allow_html=True)
 
-    yearly = df_s[df_s["Yr"]<2026].groupby("Yr").agg(
-        Revenue=("TotalRevenue","sum"), Units=("TotalUnits","sum"),
-        Invoices=("InvoiceCount","sum")).reset_index()
+    # Live subtitle with real FY numbers from filtered sales data
+    _fy_sorted_p2 = sorted(df_s["FiscalYear"].dropna().unique()) if "FiscalYear" in df_s.columns else []
+
+    def _net_by_fy(df, fy):
+        if "SaleFlag" not in df.columns: return float(df[df["FiscalYear"]==fy]["TotalRevenue"].sum())
+        d = df[(df["FiscalYear"]==fy) & (df["SaleFlag"].isin(["S","R"]))]
+        return float(d["TotalRevenue"].sum())
+
+    _sub_parts = [f"{fy}: {fmt(_net_by_fy(df_s, fy))}" for fy in _fy_sorted_p2]
+    st.markdown(note(
+        "Revenue, units and invoices from DSR Sales Database. Net Sales = Gross (SaleFlag='S') + Returns (SaleFlag='R'). "
+        "Pakistan fiscal year (Jul–Jun). " + " | ".join(_sub_parts)
+    ), unsafe_allow_html=True)
+
+    # ── Yearly Comparison: Net Revenue / Gross Units / Invoices — by FY ──
+    # Use Net Sales for revenue (S+R). Units and Invoices are from S only (gross).
+    _net_src = df_s[df_s["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_s.columns else df_s
+    _gross_src = df_s[df_s["SaleFlag"]=="S"] if "SaleFlag" in df_s.columns else df_s
+
+    rev_by_fy   = _net_src.groupby("FiscalYear")["TotalRevenue"].sum()
+    units_by_fy = _gross_src.groupby("FiscalYear")["TotalUnits"].sum()
+    inv_by_fy   = df_s.groupby("FiscalYear")["InvoiceCount"].sum()
+    mo_by_fy    = df_s.groupby("FiscalYear")["Mo"].nunique()
+
+    yearly = pd.DataFrame({
+        "FiscalYear":   rev_by_fy.index,
+        "Revenue":      rev_by_fy.values,
+        "Units":        [units_by_fy.get(fy, 0) for fy in rev_by_fy.index],
+        "Invoices":     [inv_by_fy.get(fy, 0) for fy in rev_by_fy.index],
+        "Months":       [mo_by_fy.get(fy, 0) for fy in rev_by_fy.index],
+    }).sort_values("FiscalYear").reset_index(drop=True)
+
+    # Mark partial FYs visually in the label
+    yearly["FYLabel"]   = yearly.apply(lambda r: r["FiscalYear"] + (" *" if r["Months"] < 12 else ""), axis=1)
     yearly["RevLabel"]  = yearly["Revenue"].apply(fmt)
     yearly["UnitLabel"] = yearly["Units"].apply(lambda x: f"{x/1e6:.1f}M")
     yearly["InvLabel"]  = yearly["Invoices"].apply(lambda x: f"{x/1e6:.1f}M")
 
-    st.markdown(sec("Year-over-Year Comparison (2024 vs 2025)"), unsafe_allow_html=True)
+    st.markdown(sec("Year-over-Year Comparison by Fiscal Year"), unsafe_allow_html=True)
+    st.markdown(note("* = partial fiscal year (FY25-26 has only 10/12 months so far). Revenue shown is Net Sales."),
+                unsafe_allow_html=True)
     c1,c2,c3 = st.columns(3)
     for col, field, lbl, title, color in zip(
         [c1,c2,c3], ["Revenue","Units","Invoices"],
         ["RevLabel","UnitLabel","InvLabel"],
-        ["Revenue (PKR)","Units Sold","Invoice Count"],
+        ["Net Revenue (PKR)","Units Sold (Gross)","Invoice Count"],
         ["#2c5f8a","#2e7d32","#e65100"]):
         with col:
-            fig = px.bar(yearly, x="Yr", y=field, text=lbl, title=title,
+            fig = px.bar(yearly, x="FYLabel", y=field, text=lbl, title=title,
                          color_discrete_sequence=[color])
             fig.update_traces(textposition="outside", textfont_size=12)
-            apply_layout(fig, height=270,
-                xaxis=dict(gridcolor="#eeeeee", tickmode="array", tickvals=yearly["Yr"].tolist()),
+            apply_layout(fig, height=280,
+                xaxis=dict(gridcolor="#eeeeee", title="Fiscal Year"),
                 yaxis=dict(gridcolor="#eeeeee"))
             st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown(sec("Product Revenue: 2024 vs 2025 — Side by Side"), unsafe_allow_html=True)
-    st.markdown(note("Blue = 2024. Green = 2025. Taller green bar = product grew. Top 15 products by combined revenue."), unsafe_allow_html=True)
-    ry = df_s[df_s["Yr"].isin([2024,2025])].groupby(["ProductName","Yr"])["TotalRevenue"].sum().reset_index()
-    top15 = ry.groupby("ProductName")["TotalRevenue"].sum().nlargest(15).index
-    ry = ry[ry["ProductName"].isin(top15)]
-    ry["Label"] = ry["TotalRevenue"].apply(fmt)
-    ry["Yr"] = ry["Yr"].astype(str)
-    fig = px.bar(ry, x="ProductName", y="TotalRevenue", color="Yr", barmode="group",
-                 text="Label", color_discrete_map={"2024":"#2c5f8a","2025":"#2e7d32"})
-    fig.update_traces(textposition="outside", textfont_size=9, textangle=-45)
-    apply_layout(fig, height=480, xaxis=dict(gridcolor="#eeeeee", tickangle=-35),
-                 yaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"))
-    st.plotly_chart(fig, use_container_width=True)
+    # ── Product Revenue: last two complete FYs ──
+    _complete_fys = [fy for fy in _fy_sorted_p2 if mo_by_fy.get(fy, 0) == 12]
+    if len(_complete_fys) >= 2:
+        cmp_fy_old, cmp_fy_new = _complete_fys[-2], _complete_fys[-1]
+    elif len(_complete_fys) == 1:
+        cmp_fy_old, cmp_fy_new = _complete_fys[0], _complete_fys[0]
+    else:
+        cmp_fy_old = cmp_fy_new = _fy_sorted_p2[-1] if _fy_sorted_p2 else None
 
-    # Filterable product explorer
+    st.markdown(sec(f"Product Revenue: {cmp_fy_old} vs {cmp_fy_new} — Side by Side"), unsafe_allow_html=True)
+    st.markdown(note(
+        f"Gray = {cmp_fy_old}. Blue = {cmp_fy_new}. Taller blue bar = product grew. "
+        "Top 15 products by combined Gross Sales across the two FYs."
+    ), unsafe_allow_html=True)
+
+    if cmp_fy_old and cmp_fy_new and not _gross_src.empty:
+        ry = _gross_src[_gross_src["FiscalYear"].isin([cmp_fy_old, cmp_fy_new])] \
+                .groupby(["ProductName","FiscalYear"])["TotalRevenue"].sum().reset_index()
+        top15 = ry.groupby("ProductName")["TotalRevenue"].sum().nlargest(15).index
+        ry = ry[ry["ProductName"].isin(top15)].copy()
+        ry["Label"] = ry["TotalRevenue"].apply(fmt)
+        fig = px.bar(ry, x="ProductName", y="TotalRevenue", color="FiscalYear", barmode="group",
+                     text="Label",
+                     color_discrete_map={cmp_fy_old: "#9aa5b1", cmp_fy_new: "#2c5f8a"})
+        fig.update_traces(textposition="outside", textfont_size=9, textangle=-45)
+        apply_layout(fig, height=480,
+                     xaxis=dict(gridcolor="#eeeeee", tickangle=-35, title=""),
+                     yaxis=dict(gridcolor="#eeeeee", title="Gross Revenue (PKR)"))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Filterable Product Explorer ──
     st.markdown("---")
     st.markdown(sec("🔍 Product Explorer — Adjustable View"), unsafe_allow_html=True)
     col_sf1, col_sf2, col_sf3 = st.columns(3)
@@ -498,79 +772,127 @@ elif page == "📈 Sales Analysis":
     with col_sf2:
         sort_s = st.selectbox("Sort", ["Top (Highest First)", "Bottom (Lowest First)"], key="sales_sort")
     with col_sf3:
-        yr_s = st.selectbox("Year filter", ["All Years", "2024 only", "2025 only", "2026 only"], key="sales_yr")
+        fy_options = ["All Fiscal Years"] + _fy_sorted_p2
+        fy_sel = st.selectbox("Fiscal Year filter", fy_options, key="sales_fy")
 
     asc_s = (sort_s == "Bottom (Lowest First)")
-    df_yr_s = df_s.copy()
-    if yr_s == "2024 only": df_yr_s = df_s[df_s["Yr"]==2024]
-    elif yr_s == "2025 only": df_yr_s = df_s[df_s["Yr"]==2025]
-    elif yr_s == "2026 only": df_yr_s = df_s[df_s["Yr"]==2026]
-    prod_all_s = df_yr_s.groupby("ProductName")["TotalRevenue"].sum().reset_index()
-    prod_all_s = prod_all_s[prod_all_s["TotalRevenue"]>0].sort_values("TotalRevenue", ascending=asc_s).head(n_prods_s)
+    _src = _gross_src.copy()
+    if fy_sel != "All Fiscal Years":
+        _src = _src[_src["FiscalYear"] == fy_sel]
+
+    prod_all_s = _src.groupby("ProductName")["TotalRevenue"].sum().reset_index()
+    prod_all_s = prod_all_s[prod_all_s["TotalRevenue"] > 0] \
+                    .sort_values("TotalRevenue", ascending=asc_s).head(n_prods_s).copy()
     prod_all_s["Label"] = prod_all_s["TotalRevenue"].apply(fmt)
-    title_s = f"{'Bottom' if asc_s else 'Top'} {n_prods_s} Products — {yr_s}"
+    title_s = f"{'Bottom' if asc_s else 'Top'} {n_prods_s} Products — {fy_sel} (Gross Sales)"
     cs = "Reds_r" if asc_s else "Blues"
     fig_s = px.bar(prod_all_s, x="TotalRevenue", y="ProductName", orientation="h", text="Label",
                    color="TotalRevenue", color_continuous_scale=cs, title=title_s)
     fig_s.update_traces(textposition="outside", textfont_size=9)
     h_s = max(400, n_prods_s * 28)
     apply_layout(fig_s, height=h_s, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                 xaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"), coloraxis_showscale=False)
+                 xaxis=dict(gridcolor="#eeeeee", title="Gross Revenue (PKR)"), coloraxis_showscale=False)
     st.plotly_chart(fig_s, use_container_width=True)
     st.markdown("---")
 
+    # ── Fastest Growers + Bottom performers (2-panel) ──
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(sec("Fastest Growing Products 2024→2025"), unsafe_allow_html=True)
-        st.markdown(note("Products with highest % growth. Erlina Plus XR grew +699%! Finno-Q +226% — nearly tripled. These are emerging stars needing promotional support NOW."), unsafe_allow_html=True)
-        r24 = df_s[df_s["Yr"]==2024].groupby("ProductName")["TotalRevenue"].sum()
-        r25 = df_s[df_s["Yr"]==2025].groupby("ProductName")["TotalRevenue"].sum()
-        gdf = pd.DataFrame({"y2024":r24,"y2025":r25}).dropna()
-        gdf = gdf[gdf["y2024"]>5000000]
-        gdf["Growth"] = (gdf["y2025"]-gdf["y2024"])/gdf["y2024"]*100
-        gdf = gdf.sort_values("Growth", ascending=False).head(15).reset_index()
-        gdf["Label"] = gdf["Growth"].apply(lambda x: f"{x:.0f}%")
-        fig = px.bar(gdf, x="Growth", y="ProductName", orientation="h", text="Label",
-                     color="Growth", color_continuous_scale="Greens")
-        fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=530, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Growth %"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.markdown(sec(f"🚀 Fastest Growing Products {cmp_fy_old} → {cmp_fy_new}"), unsafe_allow_html=True)
+
+        # Compute growth live, then build insight string from data (not hardcoded)
+        if cmp_fy_old and cmp_fy_new and cmp_fy_old != cmp_fy_new and not _gross_src.empty:
+            r_old = _gross_src[_gross_src["FiscalYear"]==cmp_fy_old].groupby("ProductName")["TotalRevenue"].sum()
+            r_new = _gross_src[_gross_src["FiscalYear"]==cmp_fy_new].groupby("ProductName")["TotalRevenue"].sum()
+            gdf = pd.DataFrame({"old": r_old, "new": r_new}).dropna()
+            gdf = gdf[gdf["old"] > 5_000_000]   # min threshold to kill noise
+            gdf["Growth"] = (gdf["new"] - gdf["old"]) / gdf["old"] * 100
+            gdf = gdf.sort_values("Growth", ascending=False).head(15).reset_index()
+
+            # Build live insight from top 2 growers
+            if len(gdf) >= 2:
+                g1_name, g1_pct = gdf.iloc[0]["ProductName"], gdf.iloc[0]["Growth"]
+                g2_name, g2_pct = gdf.iloc[1]["ProductName"], gdf.iloc[1]["Growth"]
+                insight = (f"Products with highest % growth. {g1_name} grew +{g1_pct:.0f}% | "
+                           f"{g2_name} +{g2_pct:.0f}%. These are emerging stars needing promotional support NOW. "
+                           f"(Min threshold: PKR 5M in {cmp_fy_old} to filter noise.)")
+            else:
+                insight = f"Top growers {cmp_fy_old} → {cmp_fy_new} (min PKR 5M baseline)."
+            st.markdown(note(insight), unsafe_allow_html=True)
+
+            gdf["Label"] = gdf["Growth"].apply(lambda x: f"{x:.0f}%")
+            fig = px.bar(gdf, x="Growth", y="ProductName", orientation="h", text="Label",
+                         color="Growth", color_continuous_scale="Greens")
+            fig.update_traces(textposition="outside", textfont_size=11)
+            apply_layout(fig, height=530, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                         xaxis=dict(gridcolor="#eeeeee", title="Growth %"), coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info(f"Need 2 complete fiscal years to compute growth. Currently have: {_complete_fys}")
 
     with col2:
         st.markdown(sec("⚠️ Underperforming Products — Adjustable"), unsafe_allow_html=True)
         n_bot20 = st.slider("Show bottom N products", 5, 50, 20, key="bot20_n")
-        bp_all = df_s[df_s["Yr"].isin([2024,2025])].groupby("ProductName")["TotalRevenue"].sum().reset_index()
-        bp = bp_all[bp_all["TotalRevenue"]>0].nsmallest(n_bot20,"TotalRevenue")
+        _bot_src = _gross_src[_gross_src["FiscalYear"].isin(_complete_fys)] if _complete_fys else _gross_src
+        bp_all = _bot_src.groupby("ProductName")["TotalRevenue"].sum().reset_index()
+        bp = bp_all[bp_all["TotalRevenue"] > 0].nsmallest(n_bot20, "TotalRevenue").copy()
         bp["Label"] = bp["TotalRevenue"].apply(fmt)
+        st.markdown(note(
+            f"Lowest-earning products across complete FYs ({', '.join(_complete_fys) if _complete_fys else 'N/A'}). "
+            "Many are discontinued SKUs or one-off items. Consider pruning SKUs below PKR 1M."
+        ), unsafe_allow_html=True)
         fig = go.Figure(go.Bar(x=bp["TotalRevenue"], y=bp["ProductName"],
             orientation="h", text=bp["Label"], textposition="outside",
             textfont_size=10, marker_color="#e65100"))
         apply_layout(fig, height=max(400, n_bot20*28), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"))
+                     xaxis=dict(gridcolor="#eeeeee", title="Gross Revenue (PKR)"))
         st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown(sec("📅 Sales Seasonality Heatmap"), unsafe_allow_html=True)
-    st.markdown(note("Each cell = one month in one year. Darker blue = more revenue. Oct/Nov/Dec ALWAYS strongest months every year."), unsafe_allow_html=True)
-    heat = df_s[df_s["Yr"]<2026].groupby(["Yr","Mo"])["TotalRevenue"].sum().reset_index()
-    heat["Month"] = heat["Mo"].map(months_map)
-    hp = heat.pivot(index="Yr", columns="Month", values="TotalRevenue")
-    hp = hp.reindex(columns=list(months_map.values()))
-    text_labels = []
-    for idx in hp.index:
-        row_labels = []
-        for col in hp.columns:
-            val = hp.loc[idx, col]
-            if pd.isna(val): row_labels.append("")
-            elif val >= 1e9: row_labels.append(f"{val/1e9:.1f}B")
-            elif val >= 1e6: row_labels.append(f"{val/1e6:.0f}M")
-            else: row_labels.append(f"{val:.0f}")
-        text_labels.append(row_labels)
-    fig = px.imshow(hp/1e6, color_continuous_scale="Blues", aspect="auto",
-                    labels=dict(color="Revenue (M PKR)"))
-    fig.update_traces(text=text_labels, texttemplate="%{text}", textfont=dict(size=11, color="black"))
-    apply_layout(fig, height=250, coloraxis_colorbar=dict(title="M PKR"))
-    st.plotly_chart(fig, use_container_width=True)
+    # ── Seasonality Heatmap: Fiscal Year × Fiscal Month ──
+    st.markdown(sec("📅 Sales Seasonality Heatmap — Fiscal Year × Fiscal Month"), unsafe_allow_html=True)
+
+    if _complete_fys and not _net_src.empty:
+        # Use only complete FYs so the heat doesn't get skewed by FY25-26 partial data
+        heat = _net_src[_net_src["FiscalYear"].isin(_complete_fys)].copy()
+        heat["FMo"] = heat["Mo"].apply(lambda m: ((m-7)%12)+1)
+        agg = heat.groupby(["FiscalYear","FMo"])["TotalRevenue"].sum().reset_index()
+        pivot_h = agg.pivot(index="FiscalYear", columns="FMo", values="TotalRevenue")
+        # Ensure Jul→Jun column order
+        pivot_h = pivot_h.reindex(columns=[1,2,3,4,5,6,7,8,9,10,11,12])
+        fmo_names = ["Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun"]
+        pivot_h.columns = fmo_names
+
+        # Compute live insight: strongest 3 and weakest 3 fiscal months
+        avg_by_fmo = pivot_h.mean().sort_values(ascending=False)
+        strongest = ", ".join(avg_by_fmo.head(3).index.tolist())
+        weakest   = ", ".join(avg_by_fmo.tail(3).index.tolist())
+        st.markdown(note(
+            f"Each cell = one fiscal month's Net Sales in one FY. Darker blue = more revenue. "
+            f"Strongest fiscal months on average: {strongest}. Weakest: {weakest}. "
+            f"Showing {len(_complete_fys)} complete FYs ({_complete_fys[0]} to {_complete_fys[-1]})."
+        ), unsafe_allow_html=True)
+
+        # Build cell labels
+        text_labels = []
+        for fy_row in pivot_h.index:
+            row_labels = []
+            for col_name in pivot_h.columns:
+                val = pivot_h.loc[fy_row, col_name]
+                if pd.isna(val): row_labels.append("")
+                elif val >= 1e9: row_labels.append(f"{val/1e9:.1f}B")
+                elif val >= 1e6: row_labels.append(f"{val/1e6:.0f}M")
+                else: row_labels.append(f"{val:.0f}")
+            text_labels.append(row_labels)
+
+        fig = px.imshow(pivot_h/1e6, color_continuous_scale="Blues", aspect="auto",
+                        labels=dict(color="Net Revenue (M PKR)", x="Fiscal Month", y="Fiscal Year"))
+        fig.update_traces(text=text_labels, texttemplate="%{text}", textfont=dict(size=11, color="black"))
+        apply_layout(fig, height=max(250, 80*len(pivot_h)),
+                     coloraxis_colorbar=dict(title="M PKR"))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Seasonality heatmap requires at least one complete fiscal year.")
+
 
 # ════════════════════════════════════════════════════════════
 # PAGE 3: PROMOTIONAL ANALYSIS
