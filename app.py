@@ -112,18 +112,18 @@ def load_data():
     dsr  = get_dsr_connection()
     ftts = get_ftts_connection()
 
-    # DSR: SALES — VW_Sales (FY23-24 H2 onwards) UNION'd with 18 archive views for FY22-23 + FY23-24 H1.
-    # Archive views are needed because VW_Sales main only holds Jan 2024+.
-    # Where "_New" variant exists, it's the corrected/final pricing — prefer it over the base view.
+    # DSR: SALES — VW_Sales (FY23-24 H2 onwards) UNION'd with base archive views for FY22-23 + FY23-24 H1.
+    # Archive views needed because VW_Sales main only holds Jan 2024+.
+    # Per supervisor: use BASE views only, ignore _New variants.
     ARCHIVE_VIEWS = [
-        # FY22-23 (Jul 2022 → Jun 2023)
-        "VW_Sales_Jul2022_New", "VW_Sales_Aug2022_New", "VW_Sales_Sep2022_New",
-        "VW_Sales_Oct2022",     "VW_Sales_Nov2022_New", "VW_Sales_Dec2022",
-        "VW_Sales_Jan2023_New", "VW_Sales_Feb2023_New", "VW_Sales_Mar2023",
-        "VW_Sales_Apr2023_New", "VW_Sales_May2023",     "VW_Sales_Jun2023",
-        # FY23-24 H1 (Jul 2023 → Dec 2023) — no _New variants exist for these
-        "VW_Sales_July2023",    "VW_Sales_Aug2023",     "VW_Sales_Sep2023",
-        "VW_Sales_Oct2023",     "VW_Sales_Nov2023",     "VW_Sales_Dec2023",
+        # FY22-23 (Jul 2022 → Jun 2023) — base views only
+        "VW_Sales_Jul2022", "VW_Sales_Aug2022", "VW_Sales_Sep2022",
+        "VW_Sales_Oct2022", "VW_Sales_Nov2022", "VW_Sales_Dec2022",
+        "VW_Sales_Jan2023", "VW_Sales_Feb2023", "VW_Sales_Mar2023",
+        "VW_Sales_Apr2023", "VW_Sales_May2023", "VW_Sales_Jun2023",
+        # FY23-24 H1 (Jul 2023 → Dec 2023)  — note: Jul uses "July2023" full name
+        "VW_Sales_July2023", "VW_Sales_Aug2023", "VW_Sales_Sep2023",
+        "VW_Sales_Oct2023",  "VW_Sales_Nov2023", "VW_Sales_Dec2023",
     ]
 
     def _sales_query(view):
