@@ -1170,8 +1170,19 @@ elif page == "💰 Promotional Analysis":
 # PAGE 4: TRAVEL ANALYSIS
 # ════════════════════════════════════════════════════════════
 elif page == "✈️ Travel Analysis":
-    st.markdown("<h2 style='color:#2c5f8a'>✈️ Travel & Field Activity Analysis (2024–2026)</h2>", unsafe_allow_html=True)
-    st.markdown(note("Travel DB (FTTS). Total trips = 4,332 | 2024: 2,015 | 2025: 2,058 | 2026 YTD: 322 (Jan–Apr partial)."), unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#2c5f8a'>✈️ Travel & Field Activity Analysis — Fiscal Year View</h2>", unsafe_allow_html=True)
+
+    # ── Live FY breakdown for subtitle ──
+    _fy_sorted_p4 = sorted(df_t["FiscalYear"].dropna().unique()) if "FiscalYear" in df_t.columns else []
+    _fy_mo_tr    = df_t.groupby("FiscalYear")["Mo"].nunique() if _fy_sorted_p4 else pd.Series(dtype=int)
+    _fy_trips    = df_t.groupby("FiscalYear")["TravelCount"].sum() if _fy_sorted_p4 else pd.Series(dtype=int)
+    _sub_trips = " | ".join(f"{fy}: {fmt_num(_fy_trips.get(fy, 0))} trips" for fy in _fy_sorted_p4)
+
+    st.markdown(note(
+        f"Travel DB (FTTS). Total trips (all FYs) = {fmt_num(df_t['TravelCount'].sum())}. "
+        f"Pakistan fiscal year (Jul–Jun). {_sub_trips}. "
+        "Note: This DB captures inter-city air/hotel travel only — local field visits (e.g., within Karachi) are NOT included."
+    ), unsafe_allow_html=True)
 
     total_trips  = df_t["TravelCount"].sum()
     total_nights = df_t["NoofNights"].sum()
@@ -1179,28 +1190,62 @@ elif page == "✈️ Travel Analysis":
     total_locs   = df_t["VisitLocation"].nunique()
 
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Trips (2024–2026)",  fmt_num(total_trips))
-    c2.metric("Total Nights",            fmt_num(total_nights))
+    c1.metric("Total Trips (All FYs)",    fmt_num(total_trips))
+    c2.metric("Total Nights",             fmt_num(total_nights))
     c3.metric("Unique Travellers",        str(total_people))
     c4.metric("Cities Covered",           str(total_locs))
     st.markdown("---")
 
+    # ── Row A: Travel by FY + Top Cities ──
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(sec("Travel Activity by Year"), unsafe_allow_html=True)
-        st.markdown(note("2024–2025 stable around 2,000 trips/year. 2026 bar is partial Jan–Apr only."), unsafe_allow_html=True)
-        yt = df_t[df_t["Yr"]<2026].groupby("Yr").agg(Trips=("TravelCount","sum")).reset_index()
-        yt["Label"] = yt["Trips"].apply(fmt_num)
-        fig = px.bar(yt, x="Yr", y="Trips", text="Label", color_discrete_sequence=["#2c5f8a"])
+        st.markdown(sec("Travel Activity by Fiscal Year"), unsafe_allow_html=True)
+        # Live insight
+        if len(_fy_sorted_p4) >= 2:
+            latest_complete = [fy for fy in _fy_sorted_p4 if _fy_mo_tr.get(fy, 0) == 12]
+            if len(latest_complete) >= 2:
+                l, p = latest_complete[-1], latest_complete[-2]
+                g = (_fy_trips[l]-_fy_trips[p])/_fy_trips[p]*100
+                st.markdown(note(
+                    f"{l} trips: {fmt_num(_fy_trips[l])} ({'+' if g>=0 else ''}{g:.1f}% vs {p}). "
+                    "Partial FYs marked with *."
+                ), unsafe_allow_html=True)
+            else:
+                st.markdown(note("Total trips per fiscal year. * = partial FY."), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Total trips per fiscal year."), unsafe_allow_html=True)
+
+        yt = df_t.groupby("FiscalYear")["TravelCount"].sum().reset_index().sort_values("FiscalYear")
+        yt["FYLabel"] = yt["FiscalYear"].apply(lambda fy: fy + (" *" if _fy_mo_tr.get(fy, 0) < 12 else ""))
+        yt["Label"] = yt["TravelCount"].apply(fmt_num)
+        fig = px.bar(yt, x="FYLabel", y="TravelCount", text="Label", color_discrete_sequence=["#2c5f8a"])
         fig.update_traces(textposition="outside", textfont_size=12)
-        apply_layout(fig, height=290,
-            xaxis=dict(gridcolor="#eeeeee", tickmode="array", tickvals=yt["Yr"].tolist()),
+        apply_layout(fig, height=300,
+            xaxis=dict(gridcolor="#eeeeee", title="Fiscal Year"),
             yaxis=dict(gridcolor="#eeeeee", title="Total Trips"))
         st.plotly_chart(fig, use_container_width=True)
+
     with col2:
         st.markdown(sec("Top 15 Most Visited Cities"), unsafe_allow_html=True)
-        st.markdown(note("Lahore #1 with 3,198 trips (all years) — biggest market. Islamabad #2 (1,841). Note: Karachi not in top visited but #1 in revenue — critical gap!"), unsafe_allow_html=True)
-        lc = df_t.groupby("VisitLocation")["TravelCount"].sum().nlargest(15).reset_index()
+        # Live top 2 cities + Karachi context
+        cities_full = df_t.groupby("VisitLocation")["TravelCount"].sum().sort_values(ascending=False)
+        karachi_trips = int(df_t[df_t["VisitLocation"].str.upper().str.contains("KARACHI", na=False)]["TravelCount"].sum())
+        if len(cities_full) >= 2:
+            c1n, c1v = cities_full.index[0], int(cities_full.iloc[0])
+            c2n, c2v = cities_full.index[1], int(cities_full.iloc[1])
+            karachi_note = (
+                f" ⚠️ Karachi = {karachi_trips} trips in DB — reps likely visit clients locally without "
+                "raising travel requests, so Karachi is under-represented in this dataset (not a gap in activity)."
+                if karachi_trips < 100 else ""
+            )
+            st.markdown(note(
+                f"{c1n} #1 with {fmt_num(c1v)} trips. {c2n} #2 ({fmt_num(c2v)}). "
+                "Travel activity concentrates in Punjab cities.{karachi_note}".format(karachi_note=karachi_note)
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Most visited cities across all FYs."), unsafe_allow_html=True)
+
+        lc = cities_full.head(15).reset_index()
         lc["Label"] = lc["TravelCount"].apply(fmt_num)
         fig = px.bar(lc, x="TravelCount", y="VisitLocation", orientation="h", text="Label",
                      color="TravelCount", color_continuous_scale="Blues")
@@ -1217,39 +1262,81 @@ elif page == "✈️ Travel Analysis":
         "Division 5": "Division 5 — Strikers (R)"
     }
 
+    # ── Row B: Division Performance + Seasonality ──
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("Division Performance — Travel Activity"), unsafe_allow_html=True)
-        st.markdown(note("Division 1 leads. Division 4 critically low at ~16 trips/person."), unsafe_allow_html=True)
+
         dv = df_t.groupby("TravellerDivision").agg(
             Trips=("TravelCount","sum"), Nights=("NoofNights","sum"),
             People=("Traveller","nunique")).reset_index()
-        dv["AvgNights"]   = (dv["Nights"]/dv["Trips"]).round(1)
-        dv["DivisionName"]= dv["TravellerDivision"].map(div_name_map).fillna(dv["TravellerDivision"])
-        dv["Label"]       = dv["Trips"].apply(fmt_num)
+        dv["TripsPerPerson"] = (dv["Trips"]/dv["People"]).round(1)
+        dv["DivisionName"]   = dv["TravellerDivision"].map(div_name_map).fillna(dv["TravellerDivision"])
+        dv["Label"]          = dv["Trips"].apply(fmt_num) + " (" + dv["TripsPerPerson"].astype(str) + "/person)"
         dv = dv.sort_values("Trips", ascending=False)
+
+        # Live insight based on trips/person
+        dv_sorted_by_eff = dv.sort_values("TripsPerPerson", ascending=False)
+        if len(dv_sorted_by_eff) >= 2:
+            top_eff   = dv_sorted_by_eff.iloc[0]
+            low_eff   = dv_sorted_by_eff.iloc[-1]
+            st.markdown(note(
+                f"Most active per-person: <b>{top_eff['TravellerDivision']}</b> "
+                f"({top_eff['TripsPerPerson']} trips/person, {int(top_eff['People'])} people). "
+                f"Least active: <b>{low_eff['TravellerDivision']}</b> "
+                f"({low_eff['TripsPerPerson']} trips/person, {int(low_eff['People'])} people)."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Division-level travel activity."), unsafe_allow_html=True)
+
         colors = ["#c62828" if t<200 else "#e65100" if t<1000 else "#2c5f8a" for t in dv["Trips"]]
         fig = go.Figure(go.Bar(x=dv["Trips"], y=dv["DivisionName"], orientation="h",
-            text=dv["Label"], textposition="outside", marker_color=colors))
-        apply_layout(fig, height=320, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+            text=dv["Label"], textposition="outside", marker_color=colors, textfont_size=10))
+        apply_layout(fig, height=340, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Trips"))
         st.plotly_chart(fig, use_container_width=True)
-        st.markdown(danger("Division 4: only ~80 trips total! Division 5: ~175 trips. These divisions are severely underperforming in field activity."), unsafe_allow_html=True)
+
+        # Live danger flag — identify smallest divisions
+        small_divs = dv[dv["Trips"] < 200]
+        if len(small_divs) > 0:
+            parts = [f"{r['TravellerDivision']}: {int(r['Trips'])} trips / {int(r['People'])} people"
+                     for _, r in small_divs.iterrows()]
+            st.markdown(danger(
+                "Low-activity divisions: " + " | ".join(parts) +
+                ". Check if these are support/strategic teams (different KPIs) or genuinely under-activated."
+            ), unsafe_allow_html=True)
+
     with col2:
-        st.markdown(sec("Travel Seasonality — Busiest Months"), unsafe_allow_html=True)
-        st.markdown(note("Dec is busiest travel month. Sep/Oct/Nov also strong — perfectly aligns with sales peaks."), unsafe_allow_html=True)
-        mt = df_t.groupby("Mo")["TravelCount"].sum().reset_index()
-        mt["Month"] = mt["Mo"].map(months_map)
+        st.markdown(sec("Travel Seasonality — by Fiscal Month"), unsafe_allow_html=True)
+
+        # Fiscal month aggregation
+        _mt_src = df_t.copy()
+        if "FiscalMonth" not in _mt_src.columns:
+            _mt_src["FiscalMonth"] = _mt_src["Mo"].apply(lambda m: ((int(m)-7)%12)+1)
+        mt = _mt_src.groupby("FiscalMonth")["TravelCount"].sum().reset_index()
+        fmo_labels_local = ["Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun"]
+        mt["MonthLabel"] = mt["FiscalMonth"].apply(lambda i: fmo_labels_local[int(i)-1])
         mt["Label"] = mt["TravelCount"].apply(fmt_num)
-        mt = mt.sort_values("TravelCount", ascending=False)
-        fig = px.bar(mt, x="Month", y="TravelCount", text="Label",
+
+        # Live insight — top 3 fiscal months
+        top3 = mt.sort_values("TravelCount", ascending=False).head(3)
+        bot3 = mt.sort_values("TravelCount", ascending=True).head(3)
+        st.markdown(note(
+            "Busiest fiscal months: <b>" + ", ".join(top3["MonthLabel"].tolist()) + "</b>. "
+            "Slowest: " + ", ".join(bot3["MonthLabel"].tolist()) + ". "
+            "Cross-check with sales seasonality — field activity should align with revenue peaks."
+        ), unsafe_allow_html=True)
+
+        mt = mt.sort_values("FiscalMonth")   # keep Jul→Jun order on x-axis
+        fig = px.bar(mt, x="MonthLabel", y="TravelCount", text="Label",
                      color="TravelCount", color_continuous_scale="Blues",
-                     category_orders={"Month":list(months_map.values())})
+                     category_orders={"MonthLabel": fmo_labels_local})
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=280, xaxis=dict(gridcolor="#eeeeee"),
+        apply_layout(fig, height=300, xaxis=dict(gridcolor="#eeeeee", title="Fiscal Month"),
                      yaxis=dict(gridcolor="#eeeeee", title="Total Trips"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── Row C: Top Travellers + Top Hotels ──
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("Top 15 Most Active Travellers"), unsafe_allow_html=True)
@@ -1263,20 +1350,36 @@ elif page == "✈️ Travel Analysis":
         apply_layout(fig, height=480, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Trips"))
         st.plotly_chart(fig, use_container_width=True)
+
     with col2:
         st.markdown(sec("Top 10 Hotels by Bookings"), unsafe_allow_html=True)
-        st.markdown(note("Indigo Heights most used. Negotiate bulk corporate rates with top hotels to reduce travel costs."), unsafe_allow_html=True)
-        ht = df_t[df_t["HotelName"]!="Not Recorded"].groupby("HotelName").agg(
+        # Live: top hotel name + its share
+        ht_full = df_t[df_t["HotelName"] != "Not Recorded"].groupby("HotelName").agg(
             Bookings=("TravelCount","sum"), Nights=("NoofNights","sum")).reset_index()
-        ht = ht.nlargest(10,"Bookings")
+        ht_full = ht_full.sort_values("Bookings", ascending=False)
+        if len(ht_full) > 0:
+            top_hotel = ht_full.iloc[0]
+            tot_bookings = ht_full["Bookings"].sum()
+            share = top_hotel["Bookings"] / tot_bookings * 100 if tot_bookings else 0
+            st.markdown(note(
+                f"Most-used: <b>{top_hotel['HotelName']}</b> "
+                f"({int(top_hotel['Bookings'])} bookings, {share:.1f}% of total). "
+                "Negotiate bulk corporate rates with top hotels to reduce travel costs."
+            ), unsafe_allow_html=True)
+        else:
+            st.markdown(note("Top hotels by booking count."), unsafe_allow_html=True)
+
+        ht = ht_full.head(10).copy()
         ht["Label"] = ht["Bookings"].apply(fmt_num)
         fig = px.bar(ht, x="Bookings", y="HotelName", orientation="h", text="Label",
                      color="Bookings", color_continuous_scale="Purples")
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=380, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=400, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Bookings"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
+    # ── Travel Explorer ──
+    st.markdown("---")
     st.markdown(sec("🔍 Travel Explorer — Adjustable"), unsafe_allow_html=True)
     col_tf1, col_tf2, col_tf3 = st.columns(3)
     with col_tf1:
@@ -1293,7 +1396,7 @@ elif page == "✈️ Travel Analysis":
     else:
         tdata = df_t.groupby("TravellerTeam")["TravelCount"].sum().reset_index()
         tdata.columns = ["Name", "Trips"]
-    tdata = tdata.sort_values("Trips", ascending=asc_travel).head(n_travel)
+    tdata = tdata[tdata["Trips"] > 0].sort_values("Trips", ascending=asc_travel).head(n_travel)
     tdata["Label"] = tdata["Trips"].apply(fmt_num)
     cs_t = "Reds_r" if asc_travel else "Blues"
     fig = px.bar(tdata, x="Trips", y="Name", orientation="h", text="Label",
@@ -1304,6 +1407,7 @@ elif page == "✈️ Travel Analysis":
                  xaxis=dict(gridcolor="#eeeeee", title="Total Trips"), coloraxis_showscale=False)
     st.plotly_chart(fig, use_container_width=True)
 
+    # ── Row D: Team-level Top/Bottom Travel ──
     st.markdown(sec("Team-Level Travel Activity"), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
@@ -1319,9 +1423,10 @@ elif page == "✈️ Travel Analysis":
         apply_layout(fig, height=480, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Trips"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
+
     with col2:
         st.markdown("**⚠️ Bottom 15 Teams — Least Field Trips**")
-        tt_bot = tt.nsmallest(15,"Trips")
+        tt_bot = tt[tt["Trips"] > 0].nsmallest(15,"Trips")
         tt_bot["Label"] = tt_bot["Trips"].apply(fmt_num)
         fig = px.bar(tt_bot, x="Trips", y="TravellerTeam", orientation="h", text="Label",
                      color="Trips", color_continuous_scale="Reds_r")
@@ -1329,6 +1434,7 @@ elif page == "✈️ Travel Analysis":
         apply_layout(fig, height=480, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Trips"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
+
 
 # ════════════════════════════════════════════════════════════
 # PAGE 5: DISTRIBUTION ANALYSIS
