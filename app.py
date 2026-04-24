@@ -373,7 +373,6 @@ st.sidebar.markdown("- 📦 ZSDCY — Distribution")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio("Navigate to", [
-    "🏠 Executive Summary",
     "📈 Sales Analysis",
     "💰 Promotional Analysis",
     "✈️ Travel Analysis",
@@ -407,274 +406,9 @@ if team_filter:
     df_a = df_a[df_a["RequestorTeams"].str.upper().isin([t.upper() for t in team_filter])]
 
 # ════════════════════════════════════════════════════════════
-# PAGE 1: EXECUTIVE SUMMARY
+# PAGE 1: SALES ANALYSIS
 # ════════════════════════════════════════════════════════════
-if page == "🏠 Executive Summary":
-    st.markdown("<h1 style='color:#2c5f8a'>💊 Pharmevo Business Intelligence Dashboard</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#666'>4 Databases | Sales + Promotions + Travel + Distribution | FY22-23 to FY25-26 | Live SQL Server</p>", unsafe_allow_html=True)
-
-    # Show any archive-view load failures (non-fatal)
-    _fails = st.session_state.get("_sales_archive_failures", [])
-    if _fails:
-        st.warning(f"⚠️ Partial data: {len(_fails)} archive view(s) failed to load — "
-                   f"{', '.join(v for v,_ in _fails[:5])}. Dashboard totals reflect only successfully-loaded views.")
-    st.markdown("---")
-
-    # ═══ Data scope info ═══
-    _fy_sorted = sorted(df_sales["FiscalYear"].dropna().unique())
-    FY_CURR = _fy_sorted[-1] if len(_fy_sorted) >= 1 else None       # e.g. "FY25-26" (partial)
-    FY_LAST = _fy_sorted[-2] if len(_fy_sorted) >= 2 else None       # e.g. "FY24-25" (latest complete)
-    FY_PREV = _fy_sorted[-3] if len(_fy_sorted) >= 3 else None       # e.g. "FY23-24"
-
-    # How many months does each FY have? Needed for apples-to-apples comparisons
-    _fy_months = df_sales.groupby("FiscalYear")["Mo"].nunique()
-    curr_fy_mo_count = int(_fy_months.get(FY_CURR, 0))
-
-    # ═══ Helpers — scoped sums by FY and SaleFlag ═══
-    def _rev(df, fy, flag=None, col="TotalRevenue"):
-        """Revenue sum for a given FY, optionally filtered by SaleFlag ('S','R','I','Q')."""
-        if fy is None or df.empty: return 0.0
-        d = df[df["FiscalYear"] == fy]
-        if flag is not None and "SaleFlag" in d.columns:
-            if isinstance(flag, (list, tuple, set)):
-                d = d[d["SaleFlag"].isin(flag)]
-            else:
-                d = d[d["SaleFlag"] == flag]
-        return float(d[col].sum())
-
-    def _rev_same_months(df, fy, months_cap, flag=None, col="TotalRevenue"):
-        """Revenue for FY, but only fiscal months 1..months_cap (for apples-to-apples partial-year compare)."""
-        if fy is None or df.empty or months_cap <= 0: return 0.0
-        d = df[(df["FiscalYear"] == fy) & (df["FiscalMonth"] <= months_cap)]
-        if flag is not None and "SaleFlag" in d.columns:
-            if isinstance(flag, (list, tuple, set)):
-                d = d[d["SaleFlag"].isin(flag)]
-            else:
-                d = d[d["SaleFlag"] == flag]
-        return float(d[col].sum())
-
-    # ═══ ROW 1 — Overall Totals (all FYs combined) ═══
-    gross_all  = float(df_sales[df_sales["SaleFlag"]=="S"]["TotalRevenue"].sum()) if "SaleFlag" in df_sales.columns else 0
-    ret_all    = float(df_sales[df_sales["SaleFlag"]=="R"]["TotalRevenue"].sum()) if "SaleFlag" in df_sales.columns else 0
-    net_all    = gross_all + ret_all       # returns are stored as negative
-    units_all  = float(df_sales[df_sales["SaleFlag"]=="S"]["TotalUnits"].sum()) if "SaleFlag" in df_sales.columns else float(df_sales["TotalUnits"].sum())
-    ret_rate   = (abs(ret_all) / gross_all * 100) if gross_all > 0 else 0
-    spend_all  = float(df_act["TotalAmount"].sum())
-    roi_all    = net_all / spend_all if spend_all > 0 else 0
-    trips_all  = float(df_travel["TravelCount"].sum()) if "TravelCount" in df_travel.columns else 0
-
-    # ═══ ROW 2 — FY24-25 (latest complete) and YoY vs FY23-24 ═══
-    gross_last = _rev(df_sales, FY_LAST, flag="S")
-    ret_last   = _rev(df_sales, FY_LAST, flag="R")
-    net_last   = gross_last + ret_last
-    units_last = _rev(df_sales, FY_LAST, flag="S", col="TotalUnits")
-    spend_last = _rev(df_act,   FY_LAST, col="TotalAmount")
-    roi_last   = net_last / spend_last if spend_last > 0 else 0
-    trips_last = _rev(df_travel, FY_LAST, col="TravelCount")
-
-    gross_prev = _rev(df_sales, FY_PREV, flag="S")
-    ret_prev   = _rev(df_sales, FY_PREV, flag="R")
-    net_prev   = gross_prev + ret_prev
-    spend_prev = _rev(df_act,   FY_PREV, col="TotalAmount")
-    roi_prev   = net_prev / spend_prev if spend_prev > 0 else 0
-
-    yoy_gross = ((gross_last-gross_prev)/gross_prev*100) if gross_prev > 0 else 0
-    yoy_net   = ((net_last-net_prev)/net_prev*100) if net_prev > 0 else 0
-
-    # ═══ ROW 3 — FY25-26 (current partial) + Records ═══
-    gross_curr = _rev(df_sales, FY_CURR, flag="S")
-    net_curr   = gross_curr + _rev(df_sales, FY_CURR, flag="R")
-    # Apples-to-apples: compare FY25-26 first N months vs FY24-25 first N months
-    net_curr_same = _rev_same_months(df_sales, FY_CURR, curr_fy_mo_count, flag=["S","R"])
-    net_last_same = _rev_same_months(df_sales, FY_LAST, curr_fy_mo_count, flag=["S","R"])
-    yoy_apples    = ((net_curr_same - net_last_same)/net_last_same*100) if net_last_same > 0 else 0
-
-    # Top product (by gross sales)
-    if "SaleFlag" in df_s.columns and not df_s.empty:
-        _gp = df_s[df_s["SaleFlag"]=="S"].groupby("ProductName")["TotalRevenue"].sum()
-    else:
-        _gp = df_s.groupby("ProductName")["TotalRevenue"].sum() if not df_s.empty else pd.Series(dtype=float)
-    top_prod_name = _gp.idxmax() if not _gp.empty else "N/A"
-    top_prod_rev  = _gp.max() if not _gp.empty else 0
-
-    # Best ROI product — from pre-computed df_roi (sales vs activities spend)
-    if not df_roi.empty:
-        _r = df_roi[(df_roi["TotalPromoSpend"] > 1_000_000) & (df_roi["TotalRevenue"] > 10_000_000)].copy()
-        if not _r.empty:
-            best_roi_row = _r.sort_values("ROI", ascending=False).iloc[0]
-            best_roi_name = best_roi_row["ProductName"]
-            best_roi_val  = best_roi_row["ROI"]
-        else:
-            best_roi_name, best_roi_val = "N/A", 0
-    else:
-        best_roi_name, best_roi_val = "N/A", 0
-
-    # Top city — from ZSDCY (latest FY available in that dataset)
-    if not df_zcity.empty and "City" in df_zcity.columns and "Revenue" in df_zcity.columns:
-        _c = df_zcity.groupby("City")["Revenue"].sum().sort_values(ascending=False)
-        top_city_name = _c.index[0] if len(_c) else "N/A"
-        top_city_rev  = _c.iloc[0] if len(_c) else 0
-    else:
-        top_city_name, top_city_rev = "N/A", 0
-
-    st.markdown("### 📊 Key Performance Indicators — Company Overview")
-    st.markdown(note(
-        f"Pakistan fiscal year (Jul–Jun). Gross Sales = SaleFlag 'S'. Net Sales = S + R (after returns). "
-        f"Both shown so you can align with the official PharmEvo reporting convention. "
-        f"Data includes {len(_fy_sorted)} fiscal years; FY22-23 backfilled from {18} monthly archive views."
-    ), unsafe_allow_html=True)
-
-    # ── Row 1: Overall Totals ──
-    st.markdown("**📅 Overall Totals — All Fiscal Years**")
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Gross Sales (All FYs)", fmt(gross_all), "SaleFlag = 'S' (pharma standard)"), unsafe_allow_html=True)
-    c2.markdown(kpi("Net Sales (All FYs)",   fmt(net_all),   f"After returns ({ret_rate:.1f}% return rate)"), unsafe_allow_html=True)
-    c3.markdown(kpi("Return Rate", f"{ret_rate:.1f}%", fmt(abs(ret_all)) + " total returns"), unsafe_allow_html=True)
-    c4.markdown(kpi("Total Promo Spend", fmt(spend_all), "All activities, all FYs"), unsafe_allow_html=True)
-    c5.markdown(kpi("Overall ROI", f"{roi_all:.1f}x", f"Net Sales ÷ Spend | {fmt_num(trips_all)} field trips"), unsafe_allow_html=True)
-
-    # ── Row 2: FY24-25 latest complete ──
-    st.markdown(f"<br>**📅 Latest Complete Fiscal Year — {FY_LAST}**", unsafe_allow_html=True)
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi(f"Gross Sales {FY_LAST}", fmt(gross_last),
-                    f"{'+' if yoy_gross>=0 else ''}{yoy_gross:.1f}% YoY vs {FY_PREV}",
-                    red=(yoy_gross<0)), unsafe_allow_html=True)
-    c2.markdown(kpi(f"Net Sales {FY_LAST}", fmt(net_last),
-                    f"{'+' if yoy_net>=0 else ''}{yoy_net:.1f}% YoY vs {FY_PREV}",
-                    red=(yoy_net<0)), unsafe_allow_html=True)
-    c3.markdown(kpi(f"Units {FY_LAST}", fmt_num(units_last), "Gross units sold"), unsafe_allow_html=True)
-    c4.markdown(kpi(f"ROI {FY_LAST}", f"{roi_last:.1f}x",
-                    f"{'↑' if roi_last>=roi_prev else '↓'} from {roi_prev:.1f}x ({FY_PREV})",
-                    red=(roi_last < roi_prev)), unsafe_allow_html=True)
-    c5.markdown(kpi(f"Trips {FY_LAST}", fmt_num(trips_last), "Field visits Jul–Jun"), unsafe_allow_html=True)
-
-    # ── Row 3: Current FY + records ──
-    st.markdown(f"<br>**📅 Current Fiscal Year ({FY_CURR}) & Company Records**", unsafe_allow_html=True)
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi(f"{FY_CURR} Net Sales YTD", fmt(net_curr),
-                    f"⚠️ Partial: {curr_fy_mo_count}/12 fiscal months", red=True), unsafe_allow_html=True)
-    c2.markdown(kpi(f"{FY_CURR} vs {FY_LAST} (same months)",
-                    f"{'+' if yoy_apples>=0 else ''}{yoy_apples:.1f}%",
-                    f"Apples-to-apples: Jul–{fiscal_month_labels[curr_fy_mo_count-1]}",
-                    red=(yoy_apples<0)), unsafe_allow_html=True)
-    c3.markdown(kpi("Top Product", top_prod_name, fmt(top_prod_rev) + " gross"), unsafe_allow_html=True)
-    c4.markdown(kpi("Best ROI Product", best_roi_name, f"{best_roi_val:.1f}x ROI"), unsafe_allow_html=True)
-    c5.markdown(kpi("Top Revenue City", top_city_name, fmt(top_city_rev) + " (ZSDCY)"), unsafe_allow_html=True)
-
-    # ═══ Revenue Trend — 3 FYs overlaid, fiscal-month axis ═══
-    st.markdown(sec("📈 Revenue Trend by Fiscal Month — Last 3 FYs Overlaid"), unsafe_allow_html=True)
-    st.markdown(note(
-        "X-axis = fiscal months (Jul → Jun). Compare same fiscal months across years. "
-        f"{FY_CURR} (orange dashed) is the current partial year. Revenue shown is Net Sales (S + R)."
-    ), unsafe_allow_html=True)
-
-    _trend_fys = [fy for fy in [FY_PREV, FY_LAST, FY_CURR] if fy is not None]
-    _trend_src = df_s[df_s["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_s.columns else df_s
-    trend = (_trend_src[_trend_src["FiscalYear"].isin(_trend_fys)]
-             .groupby(["FiscalYear","FiscalMonth"])["TotalRevenue"].sum()
-             .reset_index())
-
-    fig = go.Figure()
-    colors = {FY_PREV: "#9aa5b1", FY_LAST: "#2c5f8a", FY_CURR: "#e65100"}
-    dashes = {FY_PREV: "dot",     FY_LAST: "solid",   FY_CURR: "dash"}
-    for fy in _trend_fys:
-        sub = trend[trend["FiscalYear"]==fy].sort_values("FiscalMonth")
-        if sub.empty: continue
-        # Map fiscal month number → label
-        x_labels = [fiscal_month_labels[int(m)-1] for m in sub["FiscalMonth"]]
-        fig.add_trace(go.Scatter(
-            x=x_labels, y=sub["TotalRevenue"]/1e6,
-            name=fy + (" (partial)" if fy == FY_CURR else ""),
-            mode="lines+markers",
-            line=dict(color=colors.get(fy, "#666"), width=2.5, dash=dashes.get(fy,"solid")),
-            marker=dict(size=6),
-            hovertemplate=f"{fy} %{{x}}: PKR %{{y:.1f}}M<extra></extra>"
-        ))
-    apply_layout(fig, height=340, hovermode="x unified",
-                 xaxis=dict(title="Fiscal Month", categoryorder="array", categoryarray=fiscal_month_labels),
-                 yaxis=dict(title="Net Sales (M PKR)", gridcolor="#eeeeee"),
-                 legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ═══ Return Rate by Month — quality monitor ═══
-    st.markdown(sec("📉 Return Rate by Fiscal Month — Quality Monitor"), unsafe_allow_html=True)
-    st.markdown(note("Returns as % of gross sales. Pharma norm is 1–3%. Spikes above 3% may signal product quality or distribution issues."), unsafe_allow_html=True)
-
-    if "SaleFlag" in df_s.columns and not df_s.empty:
-        last_fys = _trend_fys
-        rr = df_s[df_s["FiscalYear"].isin(last_fys)].copy()
-        g = rr[rr["SaleFlag"]=="S"].groupby(["FiscalYear","FiscalMonth"])["TotalRevenue"].sum().rename("gross")
-        r = rr[rr["SaleFlag"]=="R"].groupby(["FiscalYear","FiscalMonth"])["TotalRevenue"].sum().rename("ret")
-        rr_df = pd.concat([g, r], axis=1).reset_index()
-        rr_df["ret"] = rr_df["ret"].fillna(0)
-        rr_df["gross"] = rr_df["gross"].fillna(0)
-        rr_df = rr_df[rr_df["gross"] > 0]
-        rr_df["rate"] = (rr_df["ret"].abs() / rr_df["gross"]) * 100
-
-        fig2 = go.Figure()
-        for fy in _trend_fys:
-            sub = rr_df[rr_df["FiscalYear"]==fy].sort_values("FiscalMonth")
-            if sub.empty: continue
-            x_labels = [fiscal_month_labels[int(m)-1] for m in sub["FiscalMonth"]]
-            fig2.add_trace(go.Scatter(
-                x=x_labels, y=sub["rate"].round(2),
-                name=fy, mode="lines+markers",
-                line=dict(color=colors.get(fy, "#666"), width=2, dash=dashes.get(fy,"solid")),
-                hovertemplate=f"{fy} %{{x}}: %{{y:.2f}}% return<extra></extra>"
-            ))
-        fig2.add_hline(y=3.0, line_dash="dot", line_color="red",
-                       annotation_text="3% alert threshold", annotation_position="top right")
-        apply_layout(fig2, height=250, hovermode="x unified",
-                     xaxis=dict(title="Fiscal Month", categoryorder="array", categoryarray=fiscal_month_labels),
-                     yaxis=dict(title="Return Rate (%)", gridcolor="#eeeeee"),
-                     legend=dict(bgcolor="white", bordercolor="#ddd", borderwidth=1))
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.info("Return-rate chart requires SaleFlag data (not available in this load).")
-
-    # Filterable charts
-    st.markdown("---")
-    st.markdown("### 📊 Explore Products & Teams")
-    col_f1, col_f2, col_f3 = st.columns(3)
-    with col_f1:
-        n_items_exec = st.slider("How many items to show?", 5, 50, 10, key="exec_n")
-    with col_f2:
-        sort_dir_exec = st.selectbox("Sort order", ["Top (Descending)", "Bottom (Ascending)"], key="exec_sort")
-    with col_f3:
-        chart_type_exec = st.selectbox("View", ["Products by Revenue", "Teams by Revenue"], key="exec_type")
-
-    asc_exec = (sort_dir_exec == "Bottom (Ascending)")
-    if chart_type_exec == "Products by Revenue":
-        all_prods = df_s.groupby("ProductName")["TotalRevenue"].sum().reset_index().sort_values("TotalRevenue", ascending=asc_exec)
-        show_df = all_prods.head(n_items_exec)
-        show_df["Label"] = show_df["TotalRevenue"].apply(fmt)
-        title_exec = f"{'Bottom' if asc_exec else 'Top'} {n_items_exec} Products by Revenue"
-        color_scale = "Reds_r" if asc_exec else "Blues"
-        fig = px.bar(show_df, x="TotalRevenue", y="ProductName", orientation="h", text="Label",
-                     color="TotalRevenue", color_continuous_scale=color_scale, title=title_exec)
-        fig.update_traces(textposition="outside", textfont_size=10)
-        h_exec = max(350, n_items_exec * 32)
-        apply_layout(fig, height=h_exec, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        all_teams = df_s.groupby("TeamName")["TotalRevenue"].sum().reset_index().sort_values("TotalRevenue", ascending=asc_exec)
-        show_df_t = all_teams.head(n_items_exec)
-        show_df_t["Label"] = show_df_t["TotalRevenue"].apply(fmt)
-        title_exec_t = f"{'Bottom' if asc_exec else 'Top'} {n_items_exec} Teams by Revenue"
-        color_scale_t = "Reds_r" if asc_exec else "Greens"
-        fig = px.bar(show_df_t, x="TotalRevenue", y="TeamName", orientation="h", text="Label",
-                     color="TotalRevenue", color_continuous_scale=color_scale_t, title=title_exec_t)
-        fig.update_traces(textposition="outside", textfont_size=10)
-        h_exec_t = max(350, n_items_exec * 32)
-        apply_layout(fig, height=h_exec_t, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Revenue (PKR)"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
-
-# ════════════════════════════════════════════════════════════
-# PAGE 2: SALES ANALYSIS
-# ════════════════════════════════════════════════════════════
-elif page == "📈 Sales Analysis":
+if page == "📈 Sales Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>📈 Sales Deep Analysis</h2>", unsafe_allow_html=True)
 
     # Live subtitle with real FY numbers from filtered sales data
@@ -4569,6 +4303,9 @@ elif page == "👔 Management View":
         ), unsafe_allow_html=True)
 
         top10_roi_df = _roi_m.head(10).reset_index()
+        # After groupby-join reset_index the column may be named 'index' — normalize to 'ProductName'
+        if "ProductName" not in top10_roi_df.columns:
+            top10_roi_df = top10_roi_df.rename(columns={top10_roi_df.columns[0]: "ProductName"})
         colors_roi_m = ["#FFD700" if i == 0 else "#2e7d32" if r > 30 else "#2c5f8a"
                         for i, r in enumerate(top10_roi_df["ROI"])]
         fig = go.Figure(go.Bar(
@@ -4738,6 +4475,9 @@ elif page == "👔 Management View":
             top_g_mgmt = top_g_mgmt[top_g_mgmt["Prev"] > 10e6]
             top_g_mgmt["Growth"] = (top_g_mgmt["Last"]-top_g_mgmt["Prev"])/top_g_mgmt["Prev"]*100
             top_g_mgmt = top_g_mgmt.sort_values("Growth", ascending=False).head(15).reset_index()
+            # Normalize the index column to 'ProductName' for downstream code
+            if "ProductName" not in top_g_mgmt.columns:
+                top_g_mgmt = top_g_mgmt.rename(columns={top_g_mgmt.columns[0]: "ProductName"})
 
             # Chart
             colors_grow = ["#FFD700" if i==0 else "#e65100" if g>100 else "#2e7d32" if g>50 else "#2c5f8a"
