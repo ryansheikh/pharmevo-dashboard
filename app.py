@@ -112,6 +112,13 @@ def load_data():
     dsr  = get_dsr_connection()
     ftts = get_ftts_connection()
 
+    # Data-source tracker — tells the UI whether each table came from SQL or stale CSV
+    source_log = {
+        "sales":      {"source": "pending", "rows": 0, "sql_ok": False},
+        "activities": {"source": "pending", "rows": 0, "sql_ok": False},
+        "travel":     {"source": "pending", "rows": 0, "sql_ok": False},
+    }
+
     # DSR: SALES — VW_Sales (FY23-24 H2 onwards) UNION'd with base archive views for FY22-23 + FY23-24 H1.
     # Archive views needed because VW_Sales main only holds Jan 2024+.
     # Per supervisor: use BASE views only, ignore _New variants.
@@ -169,10 +176,13 @@ def load_data():
 
         if sales_parts:
             ds = pd.concat(sales_parts, ignore_index=True)
+            source_log["sales"] = {"source": "sql", "rows": len(ds), "sql_ok": True}
         else:
             ds = pd.read_csv("sales_clean.csv")
+            source_log["sales"] = {"source": "csv", "rows": len(ds), "sql_ok": False}
     else:
         ds = pd.read_csv("sales_clean.csv")
+        source_log["sales"] = {"source": "csv", "rows": len(ds), "sql_ok": False}
 
     # Surface any archive-view failures at the top of the page (non-fatal)
     if archive_failures:
@@ -211,10 +221,13 @@ def load_data():
                     stm.TeamName, pm.productName, ahm.ActivityHead, ghm.GLHead
                 ORDER BY Yr, Mo
             """, ftts)
+            source_log["activities"] = {"source": "sql", "rows": len(da), "sql_ok": True}
         except:
             da = pd.read_csv("activities_clean.csv")
+            source_log["activities"] = {"source": "csv", "rows": len(da), "sql_ok": False}
     else:
         da = pd.read_csv("activities_clean.csv")
+        source_log["activities"] = {"source": "csv", "rows": len(da), "sql_ok": False}
 
     # FTTS: TRAVEL — vw_TravelRequest_Summary (verified working, 9,260 rows)
     if ftts:
@@ -243,10 +256,13 @@ def load_data():
                     VisitLocation, HotelName
                 ORDER BY Yr, Mo
             """, ftts)
+            source_log["travel"] = {"source": "sql", "rows": len(dt), "sql_ok": True}
         except:
             dt = pd.read_csv("travel_clean.csv")
+            source_log["travel"] = {"source": "csv", "rows": len(dt), "sql_ok": False}
     else:
         dt = pd.read_csv("travel_clean.csv")
+        source_log["travel"] = {"source": "csv", "rows": len(dt), "sql_ok": False}
 
     # MERGED + ROI (computed live from the data above)
     try:
@@ -279,7 +295,7 @@ def load_data():
         "sp_2024":  float(da[da["Yr"]==2024]["TotalAmount"].sum()),
         "sp_2025":  float(da[da["Yr"]==2025]["TotalAmount"].sum()),
     }
-    return ds, da, dm, dr, dt, kpis
+    return ds, da, dm, dr, dt, kpis, source_log
 
 @st.cache_data(ttl=86400)
 def load_zsdcy():
@@ -295,7 +311,7 @@ def load_zsdcy():
         empty = pd.DataFrame()
         return empty, empty, empty, empty, empty
 
-df_sales, df_act, df_merged, df_roi, df_travel, kpis = load_data()
+df_sales, df_act, df_merged, df_roi, df_travel, kpis, data_source_log = load_data()
 df_zsdcy, df_zprod, df_zcity, df_zsdp, df_zgrow     = load_zsdcy()
 
 months_map = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
@@ -382,6 +398,46 @@ page = st.sidebar.radio("Navigate to", [
     "📌 Personal Dashboard",
     "👔 Management View"
 ])
+
+# ─── DATA FRESHNESS BANNER ───────────────────────────────────
+# Critical: users need to know whether they're seeing live SQL or a cached CSV.
+# CSV means VPN is unreachable from this deploy (typical on Streamlit Cloud).
+try:
+    _sales_src = data_source_log.get("sales",      {}).get("source", "unknown")
+    _act_src   = data_source_log.get("activities", {}).get("source", "unknown")
+    _trv_src   = data_source_log.get("travel",     {}).get("source", "unknown")
+    _all_sql   = all(s == "sql" for s in [_sales_src, _act_src, _trv_src])
+    _any_csv   = any(s == "csv" for s in [_sales_src, _act_src, _trv_src])
+
+    # Check CSV file age if any CSV fallback happened
+    _csv_age_days = None
+    if _any_csv:
+        try:
+            import os, time
+            _mtime = os.path.getmtime("sales_clean.csv")
+            _csv_age_days = int((time.time() - _mtime) / 86400)
+        except Exception:
+            pass
+
+    if _all_sql:
+        st.success(
+            f"🟢 **Live data** — connected to SQL Server | "
+            f"Sales: {data_source_log['sales']['rows']:,} rows | "
+            f"Activities: {data_source_log['activities']['rows']:,} | "
+            f"Travel: {data_source_log['travel']['rows']:,} rows",
+            icon="✅")
+    else:
+        _cached_list = [k for k, v in data_source_log.items() if v.get("source") == "csv"]
+        _cached_str = ", ".join(_cached_list)
+        _age_msg = f" (~{_csv_age_days} days old)" if _csv_age_days is not None else ""
+        st.warning(
+            f"🟡 **Cached data in use** — SQL unreachable for: **{_cached_str}**{_age_msg}. "
+            f"Numbers below may not reflect the last {_csv_age_days if _csv_age_days else '?'} days. "
+            "To refresh, re-upload CSVs to GitHub (see README) or restore VPN access.",
+            icon="⚠️")
+except Exception:
+    pass
+# ─────────────────────────────────────────────────────────────
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### Filters")
