@@ -109,6 +109,43 @@ def get_ftts_connection():
 # ── LOAD DATA — ttl=86400 = refreshes every 24 hours ─────────
 @st.cache_data(ttl=86400)
 def load_data():
+    try:
+        return _load_data_inner()
+    except Exception as _ld_err:
+        # Last-resort: load from CSVs only, never raise
+        try:
+            ds = pd.read_csv("sales_clean.csv")
+        except Exception:
+            ds = pd.DataFrame()
+        try:
+            da = pd.read_csv("activities_clean.csv")
+        except Exception:
+            da = pd.DataFrame()
+        try:
+            dt = pd.read_csv("travel_clean.csv")
+        except Exception:
+            dt = pd.DataFrame()
+        # Empty placeholders
+        dm = pd.DataFrame()
+        dr = pd.DataFrame()
+        kpis = {"rev_2024":0,"rev_2025":0,"rev_2026":0,"sp_2024":0,"sp_2025":0}
+        # Fix Date columns if present
+        if "Date" in ds.columns:
+            ds["Date"] = pd.to_datetime(ds["Date"], errors="coerce")
+        if "Date" in da.columns:
+            da["Date"] = pd.to_datetime(da["Date"], errors="coerce")
+        if "FlightDate" in dt.columns:
+            dt["FlightDate"] = pd.to_datetime(dt["FlightDate"], errors="coerce")
+        if "RequestCreatedDate" in dt.columns:
+            dt["RequestCreatedDate"] = pd.to_datetime(dt["RequestCreatedDate"], errors="coerce")
+        source_log = {
+            "sales":      {"source": "csv-fallback", "rows": len(ds), "sql_ok": False, "error": str(_ld_err)[:120]},
+            "activities": {"source": "csv-fallback", "rows": len(da), "sql_ok": False},
+            "travel":     {"source": "csv-fallback", "rows": len(dt), "sql_ok": False},
+        }
+        return ds, da, dm, dr, dt, kpis, source_log
+
+def _load_data_inner():
     dsr  = get_dsr_connection()
     ftts = get_ftts_connection()
 
