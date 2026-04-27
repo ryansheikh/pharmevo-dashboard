@@ -107,6 +107,13 @@ def get_ftts_connection():
         return None
 
 # ── LOAD DATA — ttl=86400 = refreshes every 24 hours ─────────
+def _read_csv_smart(name):
+    """Read either name.csv.gz (preferred, smaller GitHub footprint) or name.csv."""
+    import os
+    if os.path.exists(name + ".gz"):
+        return pd.read_csv(name + ".gz")
+    return pd.read_csv(name)
+
 @st.cache_data(ttl=86400)
 def load_data():
     try:
@@ -114,15 +121,15 @@ def load_data():
     except Exception as _ld_err:
         # Last-resort: load from CSVs only, never raise
         try:
-            ds = pd.read_csv("sales_clean.csv")
+            ds = _read_csv_smart("sales_clean.csv")
         except Exception:
             ds = pd.DataFrame()
         try:
-            da = pd.read_csv("activities_clean.csv")
+            da = _read_csv_smart("activities_clean.csv")
         except Exception:
             da = pd.DataFrame()
         try:
-            dt = pd.read_csv("travel_clean.csv")
+            dt = _read_csv_smart("travel_clean.csv")
         except Exception:
             dt = pd.DataFrame()
         # Empty placeholders
@@ -215,10 +222,10 @@ def _load_data_inner():
             ds = pd.concat(sales_parts, ignore_index=True)
             source_log["sales"] = {"source": "sql", "rows": len(ds), "sql_ok": True}
         else:
-            ds = pd.read_csv("sales_clean.csv")
+            ds = _read_csv_smart("sales_clean.csv")
             source_log["sales"] = {"source": "csv", "rows": len(ds), "sql_ok": False}
     else:
-        ds = pd.read_csv("sales_clean.csv")
+        ds = _read_csv_smart("sales_clean.csv")
         source_log["sales"] = {"source": "csv", "rows": len(ds), "sql_ok": False}
 
     # Surface any archive-view failures at the top of the page (non-fatal)
@@ -260,10 +267,10 @@ def _load_data_inner():
             """, ftts)
             source_log["activities"] = {"source": "sql", "rows": len(da), "sql_ok": True}
         except:
-            da = pd.read_csv("activities_clean.csv")
+            da = _read_csv_smart("activities_clean.csv")
             source_log["activities"] = {"source": "csv", "rows": len(da), "sql_ok": False}
     else:
-        da = pd.read_csv("activities_clean.csv")
+        da = _read_csv_smart("activities_clean.csv")
         source_log["activities"] = {"source": "csv", "rows": len(da), "sql_ok": False}
 
     # FTTS: TRAVEL — vw_TravelRequest_Summary (verified working, 9,260 rows)
@@ -295,10 +302,10 @@ def _load_data_inner():
             """, ftts)
             source_log["travel"] = {"source": "sql", "rows": len(dt), "sql_ok": True}
         except:
-            dt = pd.read_csv("travel_clean.csv")
+            dt = _read_csv_smart("travel_clean.csv")
             source_log["travel"] = {"source": "csv", "rows": len(dt), "sql_ok": False}
     else:
-        dt = pd.read_csv("travel_clean.csv")
+        dt = _read_csv_smart("travel_clean.csv")
         source_log["travel"] = {"source": "csv", "rows": len(dt), "sql_ok": False}
 
     # MERGED + ROI (computed live from the data above)
@@ -1278,8 +1285,9 @@ elif page == "📦 Distribution Analysis":
     total_rev_z  = df_zsdcy["Revenue"].sum()
     total_qty_z  = df_zsdcy["Qty"].sum()
     total_cities = df_zsdcy["City"].nunique()
-    total_sdps   = df_zsdcy["SDP Name"].nunique()
-    total_prods  = df_zsdcy["Material Name"].nunique()
+    # SDPs and Products live in separate aggregated files (zsdcy_clean.csv is now monthly+city+category only)
+    total_sdps   = df_zsdcy["SDP Name"].nunique() if "SDP Name" in df_zsdcy.columns else (len(df_zsdp) if len(df_zsdp) > 0 else 0)
+    total_prods  = df_zsdcy["Material Name"].nunique() if "Material Name" in df_zsdcy.columns else (len(df_zprod) if len(df_zprod) > 0 else 0)
     rev24_z      = df_zsdcy[df_zsdcy["Yr"]==2024]["Revenue"].sum()
     rev25_z      = df_zsdcy[df_zsdcy["Yr"]==2025]["Revenue"].sum()
     growth_z     = ((rev25_z-rev24_z)/rev24_z*100) if rev24_z > 0 else 0
@@ -1386,9 +1394,24 @@ elif page == "📦 Distribution Analysis":
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("🏆 Top 20 Products by Revenue (SKU Level)"), unsafe_allow_html=True)
-        top20_z = df_zsdcy.groupby("Material Name").agg(Revenue=("Revenue","sum"),Qty=("Qty","sum")).reset_index().nlargest(20,"Revenue")
+        # Use Product/Material Name from df_zsdcy if present; fall back to pre-aggregated df_zprod
+        if "Material Name" in df_zsdcy.columns:
+            top20_z = df_zsdcy.groupby("Material Name").agg(Revenue=("Revenue","sum"),Qty=("Qty","sum")).reset_index().nlargest(20,"Revenue")
+            top20_z["ShortName"] = top20_z["Material Name"].str[:35]
+        elif "Product" in df_zsdcy.columns:
+            top20_z = df_zsdcy.groupby("Product").agg(Revenue=("Revenue","sum"),Qty=("Qty","sum")).reset_index().nlargest(20,"Revenue")
+            top20_z["ShortName"] = top20_z["Product"].str[:35]
+        elif len(df_zprod) > 0:
+            # Fall back to the pre-aggregated zsdcy_products.csv file
+            prod_col = "Product" if "Product" in df_zprod.columns else df_zprod.columns[0]
+            top20_z = df_zprod.nlargest(20, "Revenue").copy()
+            top20_z["ShortName"] = top20_z[prod_col].str[:35]
+            if "Qty" not in top20_z.columns:
+                top20_z["Qty"] = 0
+        else:
+            top20_z = pd.DataFrame({"ShortName":[], "Revenue":[], "Qty":[]})
+
         top20_z["Label"] = top20_z["Revenue"].apply(fmt)
-        top20_z["ShortName"] = top20_z["Material Name"].str[:35]
         fig = px.bar(top20_z, x="Revenue", y="ShortName", orientation="h", text="Label",
                      color="Revenue", color_continuous_scale="Blues")
         fig.update_traces(textposition="outside", textfont_size=9)
@@ -3036,7 +3059,7 @@ KEY FY METRICS
             c2.markdown(kpi("ZSDCY Revenue", fmt(zrev_all_c), "Primary proxy (2024+2025)"), unsafe_allow_html=True)
             c3.markdown(kpi("—", "—", "—"), unsafe_allow_html=True)
         c4.markdown(kpi("Distributors", str(distributor_count) if distributor_count else "—", "Live DSR count"), unsafe_allow_html=True)
-        c5.markdown(kpi("SDPs (ZSDCY)", str(df_zsdcy["SDP Name"].nunique()), "Premier Sales network"), unsafe_allow_html=True)
+        c5.markdown(kpi("SDPs (ZSDCY)", str(df_zsdcy["SDP Name"].nunique() if "SDP Name" in df_zsdcy.columns else (len(df_zsdp) if len(df_zsdp) > 0 else "—")), "Premier Sales network"), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("**💰 Promotional Investment + Field Activity**")
@@ -4123,7 +4146,13 @@ elif page == "📌 Personal Dashboard":
                                 apply_layout(fig, height=280, yaxis=dict(title="Growth % 2024→2025"), showlegend=False)
                                 st.plotly_chart(fig, use_container_width=True)
                             elif chart_key == "top_sdp":
-                                sdp_t = df_zsdcy.groupby("SDP Name")["Revenue"].sum().nlargest(10).reset_index()
+                                # Try df_zsdcy if it has SDP Name column, else fall back to df_zsdp aggregated file
+                                if "SDP Name" in df_zsdcy.columns:
+                                    sdp_t = df_zsdcy.groupby("SDP Name")["Revenue"].sum().nlargest(10).reset_index()
+                                elif len(df_zsdp) > 0:
+                                    sdp_t = df_zsdp.nlargest(10, "Revenue").copy()
+                                else:
+                                    sdp_t = pd.DataFrame({"SDP Name":[], "Revenue":[]})
                                 sdp_t["Short"] = sdp_t["SDP Name"].str.replace("PREMIER SALES PVT LTD-","").str.title().str[:30]
                                 fig = px.bar(sdp_t, x="Revenue", y="Short", orientation="h", text=sdp_t["Revenue"].apply(fmt), color_discrete_sequence=["#2e7d32"])
                                 fig.update_traces(textposition="outside", textfont_size=9)
@@ -4196,13 +4225,16 @@ elif page == "📌 Personal Dashboard":
                                 st.dataframe(qw, use_container_width=True, hide_index=True)
                             elif chart_key == "lost_dist":
                                 try:
-                                    sdp24 = set(df_zsdcy[df_zsdcy["Yr"]==2024]["SDP Name"].unique())
-                                    sdp25 = set(df_zsdcy[df_zsdcy["Yr"]==2025]["SDP Name"].unique())
-                                    lost_s = sdp24 - sdp25
-                                    ld = [(s, df_zsdcy[df_zsdcy["SDP Name"]==s]["Revenue"].sum()) for s in lost_s]
-                                    ld_df = pd.DataFrame(ld, columns=["Distributor","Lost Revenue"]).sort_values("Lost Revenue",ascending=False).head(10)
-                                    ld_df["Lost Revenue"] = ld_df["Lost Revenue"].apply(fmt)
-                                    st.dataframe(ld_df, use_container_width=True, hide_index=True)
+                                    if "SDP Name" not in df_zsdcy.columns:
+                                        st.info("Lost-distributor analysis requires SDP-level data. Currently using monthly aggregates only — see Distribution Analysis page for full distributor view.")
+                                    else:
+                                        sdp24 = set(df_zsdcy[df_zsdcy["Yr"]==2024]["SDP Name"].unique())
+                                        sdp25 = set(df_zsdcy[df_zsdcy["Yr"]==2025]["SDP Name"].unique())
+                                        lost_s = sdp24 - sdp25
+                                        ld = [(s, df_zsdcy[df_zsdcy["SDP Name"]==s]["Revenue"].sum()) for s in lost_s]
+                                        ld_df = pd.DataFrame(ld, columns=["Distributor","Lost Revenue"]).sort_values("Lost Revenue",ascending=False).head(10)
+                                        ld_df["Lost Revenue"] = ld_df["Lost Revenue"].apply(fmt)
+                                        st.dataframe(ld_df, use_container_width=True, hide_index=True)
                                 except: st.info("ZSDCY data not available")
                         except Exception as e:
                             st.error(f"Error: {e}")
