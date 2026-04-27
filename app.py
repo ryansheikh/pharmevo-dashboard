@@ -1421,8 +1421,19 @@ elif page == "📦 Distribution Analysis":
     with col2:
         st.markdown(sec("🚀 Fastest Growing Products 2024→2025"), unsafe_allow_html=True)
 
-        # Live insight — top 2 growers from data
-        grow_top = df_zgrow[df_zgrow["Rev2024"]>10e6].nlargest(20,"Growth")
+        # Live insight — top 2 growers from data (defensive: handle both old and new column names)
+        _zg = df_zgrow.copy()
+        if "Rev2024" not in _zg.columns and "Y2024" in _zg.columns:
+            _zg["Rev2024"] = pd.to_numeric(_zg["Y2024"], errors="coerce").fillna(0)
+            _zg["Rev2025"] = pd.to_numeric(_zg["Y2025"], errors="coerce").fillna(0)
+            _zg["Growth"] = ((_zg["Rev2025"] - _zg["Rev2024"]) / _zg["Rev2024"].replace(0, pd.NA) * 100).fillna(0)
+        if "Material Name" not in _zg.columns:
+            _zg["Material Name"] = _zg["Product"] if "Product" in _zg.columns else _zg.iloc[:,0]
+        # Force numeric on Growth in case it's stored as object
+        _zg["Growth"] = pd.to_numeric(_zg["Growth"], errors="coerce").fillna(0)
+        _zg["Rev2024"] = pd.to_numeric(_zg["Rev2024"], errors="coerce").fillna(0)
+
+        grow_top = _zg[_zg["Rev2024"]>10e6].nlargest(20,"Growth")
         if len(grow_top) >= 2:
             g1 = grow_top.iloc[0]
             g2 = grow_top.iloc[1]
@@ -1438,7 +1449,7 @@ elif page == "📦 Distribution Analysis":
             st.markdown(note("Fastest growing products between 2024 and 2025."), unsafe_allow_html=True)
 
         grow_top["Label"] = grow_top["Growth"].apply(lambda x: f"{x:+.0f}%")
-        grow_top["ShortName"] = grow_top["Material Name"].str[:35]
+        grow_top["ShortName"] = grow_top["Material Name"].astype(str).str[:35]
         colors_g = ["#2e7d32" if g>100 else "#2c5f8a" if g>50 else "#e65100" for g in grow_top["Growth"]]
         fig = go.Figure(go.Bar(x=grow_top["Growth"], y=grow_top["ShortName"], orientation="h",
             text=grow_top["Label"], textposition="outside", textfont_size=9, marker_color=colors_g))
@@ -3358,7 +3369,7 @@ elif page == "🤖 ML Intelligence":
         return pd.DataFrame(forecasts)
 
     def _draw_forecast(hist_ts, fc_df, value_label, value_color, fc_color,
-                        divisor, unit_str, fmt_fn, title, hist_window_start=None):
+                        divisor, fmt_fn, title, hist_window_start=None):
         """Plot history (last 24+ months) + forecast + ±10% band."""
         hist_plot = hist_ts.copy()
         if hist_window_start is not None:
