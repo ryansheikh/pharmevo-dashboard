@@ -3790,6 +3790,209 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
                          yaxis=dict(gridcolor="#eee", title="PKR Millions"), showlegend=False)
             fig2.update_layout(title=f"{prod_sel}: {sel_roi:.1f}x Return")
             st.plotly_chart(fig2, use_container_width=True)
+
+    # ════════════════════════════════════════════════════
+    # SECTION D — FY-TOTAL FORECAST vs PKR 28B TARGET
+    # ════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown(f"""<div style='background:#fce4ec;border-left:5px solid #c2185b;border-radius:8px;padding:12px 16px;margin:10px 0'>
+    <b style='font-size:16px;color:#c2185b'>🎯 SECTION D — FY25-26 Closing Forecast vs PKR 28B Target</b><br>
+    <span style='color:#333;font-size:13px'>Will we hit the Pakistan FY25-26 (Jul'25 → Jun'26) target? Live answer based on YTD actuals + 6-month forecast.</span>
+    </div>""", unsafe_allow_html=True)
+
+    try:
+        TARGET_FY = 28e9   # PKR 28 Billion target (set by management)
+
+        # Compute YTD actual (excluding partial latest month) + remaining months forecast
+        # FY25-26 = Jul 2025 → Jun 2026
+        fy_start  = pd.Timestamp("2025-07-01")
+        fy_end    = pd.Timestamp("2026-06-30")
+        ytd_full  = ts_dsr_rev.loc[fy_start:fy_end]   # all months including partial
+        ytd_train = ts_dsr_rev_train.loc[fy_start:fy_end]   # excludes partial latest
+
+        ytd_complete_actual = ytd_train.sum()
+        months_complete     = len(ytd_train)
+        months_forecasted   = 0
+        forecast_total      = 0
+        partial_month_actual = 0
+        partial_month_forecast = 0
+        partial_month_label = None
+
+        # If latest month was partial, get its FORECAST (not its incomplete actual)
+        if dsr_rev_partial:
+            partial_month_actual = ts_dsr_rev.iloc[-1]   # what we have so far this month
+            partial_month_label  = ts_dsr_rev.index[-1]
+            # Forecast what the partial month SHOULD finish at (using full GBR forecast for next-1 month)
+            try:
+                fc_partial = _gbr_forecast(ts_dsr_rev_train, n_months=1)
+                partial_month_forecast = fc_partial["Forecast"].iloc[0]
+            except:
+                partial_month_forecast = ts_dsr_rev_train.iloc[-1]   # fallback
+
+        # Months still ahead in this FY (after the partial-month boundary)
+        last_known_month = ts_dsr_rev.index[-1] if dsr_rev_partial else ts_dsr_rev_train.index[-1]
+        # +1 because we want NEXT month after the partial
+        first_future = (last_known_month + pd.DateOffset(months=1)).replace(day=1)
+        months_to_fy_end = 0
+        cursor = first_future
+        while cursor <= fy_end:
+            months_to_fy_end += 1
+            cursor = (cursor + pd.DateOffset(months=1)).replace(day=1)
+
+        if months_to_fy_end > 0:
+            try:
+                # Forecast 1 partial-month + remaining months from train (already excludes partial)
+                horizon = (1 if dsr_rev_partial else 0) + months_to_fy_end
+                fc_d = _gbr_forecast(ts_dsr_rev_train, n_months=horizon)
+                # Skip first row if we already counted it as the partial-month forecast
+                if dsr_rev_partial:
+                    fc_remaining = fc_d.iloc[1:]
+                else:
+                    fc_remaining = fc_d
+                forecast_total = fc_remaining["Forecast"].sum()
+                months_forecasted = len(fc_remaining)
+            except Exception:
+                forecast_total = 0
+                months_forecasted = 0
+
+        # Total projected closing = complete actual + partial-month forecast + future months forecast
+        if dsr_rev_partial:
+            projected_closing = ytd_complete_actual + partial_month_forecast + forecast_total
+        else:
+            projected_closing = ytd_complete_actual + forecast_total
+
+        gap_to_target = projected_closing - TARGET_FY
+        achievement_pct = (projected_closing / TARGET_FY) * 100
+
+        # KPI bar
+        kc1, kc2, kc3, kc4 = st.columns(4)
+        kc1.markdown(kpi("Target FY25-26", "PKR 28.00B", "Set by management"), unsafe_allow_html=True)
+        kc2.markdown(kpi("YTD Actual",
+                         f"PKR {ytd_complete_actual/1e9:.2f}B",
+                         f"{months_complete} complete months"), unsafe_allow_html=True)
+        kc3.markdown(kpi("Forecast Remaining",
+                         f"PKR {(partial_month_forecast + forecast_total)/1e9:.2f}B",
+                         f"{(1 if dsr_rev_partial else 0)+months_forecasted} months ahead"), unsafe_allow_html=True)
+        is_short = projected_closing < TARGET_FY
+        kc4.markdown(kpi("Projected Close",
+                         f"PKR {projected_closing/1e9:.2f}B",
+                         f"{achievement_pct:.1f}% of target",
+                         red=is_short), unsafe_allow_html=True)
+
+        # Gap analysis card
+        if gap_to_target >= 0:
+            st.success(
+                f"✅ **On track to exceed target.** "
+                f"Projected closing PKR {projected_closing/1e9:.2f}B is PKR {gap_to_target/1e9:.2f}B "
+                f"({gap_to_target/TARGET_FY*100:+.1f}%) above the PKR 28B target. "
+                f"Confidence: ±10% based on Gradient Boosting MAPE 7.30%."
+            )
+        elif achievement_pct >= 95:
+            st.warning(
+                f"⚠️ **Stretch target — within reach.** "
+                f"Projected closing PKR {projected_closing/1e9:.2f}B falls short by PKR {abs(gap_to_target)/1e9:.2f}B "
+                f"({gap_to_target/TARGET_FY*100:+.1f}%). To hit target, the {months_forecasted+(1 if dsr_rev_partial else 0)} "
+                f"remaining months need to average PKR {(TARGET_FY-ytd_complete_actual)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/1e9:.2f}B "
+                f"vs forecast of PKR {(partial_month_forecast+forecast_total)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/1e9:.2f}B/month."
+            )
+        else:
+            st.error(
+                f"❌ **Off-track for FY25-26 target.** "
+                f"Projected closing PKR {projected_closing/1e9:.2f}B falls short by PKR {abs(gap_to_target)/1e9:.2f}B "
+                f"({gap_to_target/TARGET_FY*100:+.1f}%). The remaining months would need PKR "
+                f"{(TARGET_FY-ytd_complete_actual)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/1e9:.2f}B/month "
+                f"to close the gap — that's {((TARGET_FY-ytd_complete_actual)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/(partial_month_forecast+forecast_total)*max(1,months_forecasted+(1 if dsr_rev_partial else 0))-1)*100:.0f}% above current run-rate."
+            )
+
+        # Visual: cumulative actual + forecast vs target line
+        col1, col2 = st.columns([3,1])
+        with col1:
+            # Build month-by-month FY view
+            fy_months = pd.date_range(fy_start, fy_end, freq="MS")
+            actual_vals = []
+            forecast_vals = []
+            for m in fy_months:
+                if m in ts_dsr_rev_train.index:
+                    actual_vals.append(ts_dsr_rev_train.loc[m])
+                    forecast_vals.append(None)
+                elif dsr_rev_partial and m == partial_month_label:
+                    actual_vals.append(None)
+                    forecast_vals.append(partial_month_forecast)
+                else:
+                    actual_vals.append(None)
+                    # Find this month in forecast
+                    if 'fc_d' in dir():
+                        match = fc_d[fc_d["Date"]==m]
+                        if len(match):
+                            forecast_vals.append(match["Forecast"].iloc[0])
+                        else:
+                            forecast_vals.append(None)
+                    else:
+                        forecast_vals.append(None)
+
+            fy_df = pd.DataFrame({"Month": fy_months,
+                                  "Actual": actual_vals,
+                                  "Forecast": forecast_vals})
+            # Cumulative
+            fy_df["CumActual"] = fy_df["Actual"].cumsum()
+            # For cumulative forecast, we need to start from last actual and add forecast each month
+            cum = ytd_complete_actual
+            cum_forecast = []
+            for v in forecast_vals:
+                if v is not None:
+                    cum += v
+                    cum_forecast.append(cum)
+                else:
+                    cum_forecast.append(None)
+            fy_df["CumForecast"] = cum_forecast
+
+            fig_d = go.Figure()
+            fig_d.add_trace(go.Scatter(x=fy_df["Month"], y=fy_df["CumActual"]/1e9,
+                name="Cumulative Actual", mode="lines+markers",
+                line=dict(color="#2c5f8a", width=3),
+                marker=dict(size=9)))
+            fig_d.add_trace(go.Scatter(x=fy_df["Month"], y=fy_df["CumForecast"]/1e9,
+                name="Cumulative Projection", mode="lines+markers",
+                line=dict(color="#e65100", width=3, dash="dash"),
+                marker=dict(size=9, symbol="diamond")))
+            # Target line
+            fig_d.add_hline(y=TARGET_FY/1e9, line_dash="dot", line_color="#c2185b", line_width=2,
+                            annotation_text=f"Target: PKR 28B",
+                            annotation_position="top right",
+                            annotation_font=dict(color="#c2185b", size=12))
+            apply_layout(fig_d, height=400,
+                         xaxis=dict(gridcolor="#eee", title="Fiscal Month"),
+                         yaxis=dict(gridcolor="#eee", title="Cumulative Revenue (PKR Billions)"),
+                         hovermode="x unified")
+            fig_d.update_layout(title=f"FY25-26 Cumulative Trajectory — Target PKR 28B")
+            st.plotly_chart(fig_d, use_container_width=True)
+
+        with col2:
+            st.markdown(f"""<div class="manual-working">FY25-26 CLOSING FORECAST
+══════════════════════════════
+Target  : PKR 28.00B
+
+YTD Actual ({months_complete} months):
+  PKR {ytd_complete_actual/1e9:.2f}B
+  Avg PKR {ytd_complete_actual/max(1,months_complete)/1e9:.2f}B/month
+
+Forecast Remaining:
+  Months: {(1 if dsr_rev_partial else 0)+months_forecasted}
+  Total : PKR {(partial_month_forecast+forecast_total)/1e9:.2f}B
+  Avg   : PKR {(partial_month_forecast+forecast_total)/max(1,(1 if dsr_rev_partial else 0)+months_forecasted)/1e9:.2f}B/mo
+
+PROJECTED CLOSE: PKR {projected_closing/1e9:.2f}B
+                 ({achievement_pct:.1f}% of target)
+
+GAP TO TARGET  : PKR {gap_to_target/1e9:+.2f}B
+
+Status: {'ON TRACK' if gap_to_target >= 0 else 'STRETCH' if achievement_pct >= 95 else 'OFF TRACK'}
+══════════════════════════════
+Model: Gradient Boosting
+MAPE : 7.30%
+Confidence band: ±10%</div>""", unsafe_allow_html=True)
+    except Exception as _e:
+        st.warning(f"FY-target forecast couldn't render: {_e}")
 # ════════════════════════════════════════════════════════════
 # PAGE 13: PERSONAL DASHBOARD
 # ════════════════════════════════════════════════════════════
