@@ -337,7 +337,12 @@ def _load_data_inner():
 @st.cache_data(ttl=86400)
 def load_zsdcy():
     try:
-        df   = pd.read_csv("zsdcy_clean.csv")
+        # Try gzipped first (preferred — smaller GitHub footprint), fall back to plain CSV
+        import os
+        if os.path.exists("zsdcy_clean.csv.gz"):
+            df   = pd.read_csv("zsdcy_clean.csv.gz")
+        else:
+            df   = pd.read_csv("zsdcy_clean.csv")
         prod = pd.read_csv("zsdcy_products.csv")
         city = pd.read_csv("zsdcy_cities.csv")
         sdp  = pd.read_csv("zsdcy_sdp.csv")
