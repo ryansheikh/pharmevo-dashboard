@@ -1472,8 +1472,8 @@ elif page == "📦 Distribution Analysis":
     with col2:
         st.markdown(sec("📈 City Growth 2024→2025"), unsafe_allow_html=True)
 
-        city24 = df_zcity[df_zcity["Yr"]==2024].groupby("City")["Revenue"].sum()
-        city25 = df_zcity[df_zcity["Yr"]==2025].groupby("City")["Revenue"].sum()
+        city24 = df_zsdcy[df_zsdcy["Yr"]==2024].groupby("City")["Revenue"].sum()
+        city25 = df_zsdcy[df_zsdcy["Yr"]==2025].groupby("City")["Revenue"].sum()
         city_g = pd.DataFrame({"2024":city24,"2025":city25}).dropna()
         city_g = city_g[city_g["2024"]>10e6]
         city_g["Growth"] = (city_g["2025"]-city_g["2024"])/city_g["2024"]*100
@@ -1558,7 +1558,12 @@ PKR 150-200M new markets
     st.markdown(sec("🏢 Top 20 Premier Sales Depots (SDPs) by Revenue — Own Distribution Network"), unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        sdp_total = df_zsdp.groupby("SDP Name").agg(Revenue=("Revenue","sum"),Products=("Products","max")).reset_index().nlargest(20,"Revenue")
+        # df_zsdp has: SDP Name, Revenue, Qty, Products, City
+        if "Products" in df_zsdp.columns:
+            sdp_total = df_zsdp.groupby("SDP Name").agg(Revenue=("Revenue","sum"),Products=("Products","max")).reset_index().nlargest(20,"Revenue")
+        else:
+            sdp_total = df_zsdp.groupby("SDP Name")["Revenue"].sum().reset_index().nlargest(20,"Revenue")
+            sdp_total["Products"] = 0
         sdp_total["ShortName"] = sdp_total["SDP Name"].str.replace("PREMIER SALES PVT LTD-","").str.title()
         sdp_total["Label"] = sdp_total["Revenue"].apply(fmt)
         fig = px.bar(sdp_total, x="Revenue", y="ShortName", orientation="h", text="Label",
@@ -1569,15 +1574,18 @@ PKR 150-200M new markets
         st.plotly_chart(fig, use_container_width=True)
     with col2:
         st.markdown(sec("📦 Products per Distributor"), unsafe_allow_html=True)
-        sdp_prods = df_zsdp.groupby("SDP Name")["Products"].max().nlargest(20).reset_index()
-        sdp_prods["ShortName"] = sdp_prods["SDP Name"].str.replace("PREMIER SALES PVT LTD-","").str.title()
-        sdp_prods["Label"] = sdp_prods["Products"].astype(str) + " products"
-        fig = px.bar(sdp_prods, x="Products", y="ShortName", orientation="h", text="Label",
-                     color="Products", color_continuous_scale="Purples")
-        fig.update_traces(textposition="outside", textfont_size=10)
-        apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Unique Products"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        if "Products" in df_zsdp.columns:
+            sdp_prods = df_zsdp.groupby("SDP Name")["Products"].max().nlargest(20).reset_index()
+            sdp_prods["ShortName"] = sdp_prods["SDP Name"].str.replace("PREMIER SALES PVT LTD-","").str.title()
+            sdp_prods["Label"] = sdp_prods["Products"].astype(str) + " products"
+            fig = px.bar(sdp_prods, x="Products", y="ShortName", orientation="h", text="Label",
+                         color="Products", color_continuous_scale="Purples")
+            fig.update_traces(textposition="outside", textfont_size=10)
+            apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                         xaxis=dict(gridcolor="#eeeeee", title="Unique Products"), coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Per-distributor product count requires updated zsdcy_sdp.csv with Products column. Re-run the regeneration script.")
 
 
 # ════════════════════════════════════════════════════════════
@@ -1744,6 +1752,103 @@ elif page == "🔬 Strategic Intelligence Hub":
             apply_layout(fig, height=420, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                          xaxis=dict(gridcolor="#eeeeee", title="ROI"))
             st.plotly_chart(fig, use_container_width=True)
+
+        # ════════════════════════════════════════════════════════════
+        # 🎯 4-FORMULA ROI COMPARISON — comprehensive view
+        # ════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown(sec("🎯 ROI Across 4 Formulas — Comprehensive Comparison"), unsafe_allow_html=True)
+        st.markdown(note(
+            "Same products, four different ROI definitions. <b>Formula 1 (current)</b> = simplest. "
+            "<b>Formula 3 (Full GTM)</b> = most comprehensive — accounts for travel costs, returns, and discounts. "
+            "Use this when the question is 'what is our true marketing efficiency?'"
+        ), unsafe_allow_html=True)
+
+        # Build 4 formulas in one table
+        # 1. Need: GrossRev (S), NetRev (S+R), Discount, PromoSpend, TravelAllocated
+        try:
+            sales_S  = df_sales[df_sales["SaleFlag"]=="S"] if "SaleFlag" in df_sales.columns else df_sales
+            sales_R  = df_sales[df_sales["SaleFlag"]=="R"] if "SaleFlag" in df_sales.columns else df_sales.head(0)
+
+            gross   = sales_S.groupby("ProductName").agg(GrossRev=("TotalRevenue","sum"),
+                                                          Discount=("TotalDiscount","sum")).reset_index()
+            returns = sales_R.groupby("ProductName")["TotalRevenue"].sum().reset_index()
+            returns.columns = ["ProductName","ReturnsRev"]
+            roi4 = gross.merge(returns, on="ProductName", how="left").fillna(0)
+            roi4["NetRev"] = roi4["GrossRev"] + roi4["ReturnsRev"]      # returns are negative
+            roi4["NetRealizedRev"] = roi4["GrossRev"] + roi4["ReturnsRev"] - roi4["Discount"]
+
+            # Promo per product
+            promo = df_act.groupby("Product")["TotalAmount"].sum().reset_index()
+            promo.columns = ["ProductName","PromoSpend"]
+            roi4 = roi4.merge(promo, on="ProductName", how="left").fillna(0)
+
+            # Travel cost — assume PKR 25k/trip avg, allocate proportional to promo spend
+            total_trips    = len(df_travel)
+            total_travel_p = total_trips * 25_000
+            total_promo_p  = roi4["PromoSpend"].sum()
+            roi4["TravelAlloc"] = (roi4["PromoSpend"]/total_promo_p) * total_travel_p if total_promo_p > 0 else 0
+
+            # Filter — meaningful spend & revenue
+            roi4 = roi4[(roi4["PromoSpend"] > 1e6) & (roi4["GrossRev"] > 10e6)].copy()
+
+            # 4 formulas
+            roi4["F1_Current"]      = (roi4["GrossRev"] / roi4["PromoSpend"]).round(2)
+            roi4["F2_Net"]          = (roi4["NetRealizedRev"] / roi4["PromoSpend"]).round(2)
+            roi4["F3_FullGTM"]      = (roi4["NetRealizedRev"] / (roi4["PromoSpend"]+roi4["TravelAlloc"])).round(2)
+            roi4["F4_Payoff"]       = ((roi4["NetRealizedRev"]-roi4["PromoSpend"]-roi4["TravelAlloc"]) / roi4["PromoSpend"]).round(2)
+
+            # Side-by-side display table
+            display4 = roi4.sort_values("F1_Current", ascending=False).head(20)[
+                ["ProductName","GrossRev","Discount","PromoSpend","TravelAlloc",
+                 "F1_Current","F2_Net","F3_FullGTM","F4_Payoff"]
+            ].copy()
+            display4["GrossRev"]    = display4["GrossRev"].apply(fmt)
+            display4["Discount"]    = display4["Discount"].apply(fmt)
+            display4["PromoSpend"]  = display4["PromoSpend"].apply(fmt)
+            display4["TravelAlloc"] = display4["TravelAlloc"].apply(fmt)
+            display4["F1_Current"]  = display4["F1_Current"].apply(lambda x: f"{x:.1f}x")
+            display4["F2_Net"]      = display4["F2_Net"].apply(lambda x: f"{x:.1f}x")
+            display4["F3_FullGTM"]  = display4["F3_FullGTM"].apply(lambda x: f"{x:.1f}x")
+            display4["F4_Payoff"]   = display4["F4_Payoff"].apply(lambda x: f"{x:.1f}x")
+            display4 = display4.rename(columns={
+                "ProductName":"Product","GrossRev":"Gross Rev","Discount":"Disc",
+                "PromoSpend":"Promo","TravelAlloc":"Travel",
+                "F1_Current":"F1 Gross÷P","F2_Net":"F2 Net÷P","F3_FullGTM":"F3 Net÷GTM","F4_Payoff":"F4 Payoff"
+            })
+            st.dataframe(display4, use_container_width=True, hide_index=True)
+
+            # Summary stats card
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(kpi("F1 Median", f"{roi4['F1_Current'].median():.1f}x", "Current formula"), unsafe_allow_html=True)
+            c2.markdown(kpi("F2 Median", f"{roi4['F2_Net'].median():.1f}x", "Net of returns/disc"), unsafe_allow_html=True)
+            c3.markdown(kpi("F3 Median", f"{roi4['F3_FullGTM'].median():.1f}x", "Includes travel"), unsafe_allow_html=True)
+            c4.markdown(kpi("F4 Median", f"{roi4['F4_Payoff'].median():.1f}x", "Profit/Promo"), unsafe_allow_html=True)
+
+            with st.expander("📖 Formula definitions — click to expand"):
+                st.markdown("""
+**Formula 1 — Current (Gross ÷ Promo)**
+`ROI = Gross Sales (SaleFlag='S') ÷ Promotional Spend`
+Fast, simple. Used as headline ROI throughout the dashboard. Misses returns, discounts, travel.
+
+**Formula 2 — Net Realized (Net ÷ Promo)**
+`ROI = (Gross − Returns − Discounts) ÷ Promotional Spend`
+Counts only revenue that actually arrived (returns subtracted) and what reached the company net of channel discounts. Still ignores travel.
+
+**Formula 3 — Full GTM (Net ÷ Promo + Travel)** ⭐ Recommended
+`ROI = (Gross − Returns − Discounts) ÷ (Promotional Spend + Allocated Travel Cost)`
+Most comprehensive. Travel cost: ~PKR 25,000/trip × total trips, allocated proportional to each product's promo spend.
+
+**Formula 4 — Payoff Multiple**
+`ROI = (Net Revenue − Promo − Travel) ÷ Promo`
+"PKR X back per PKR 1 of promo". Most intuitive for non-finance audience but less standard.
+
+**Filters applied to all formulas:** product must have promo spend > PKR 1M and gross revenue > PKR 10M (eliminates noise from small/test products).
+
+**Note on travel allocation:** PharmEvo doesn't track travel-by-product. We allocate total field-trip cost proportionally to each product's promo spend share — products with more promotional activity also drive proportionally more field visits.
+""")
+        except Exception as _e:
+            st.warning(f"4-formula ROI table couldn't render: {_e}")
 
         # ── Team ROI Summary Table (LIVE COMPUTED) ──
         st.markdown(sec("Team ROI Summary Table"), unsafe_allow_html=True)
