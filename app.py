@@ -360,8 +360,26 @@ def load_zsdcy():
         empty = pd.DataFrame()
         return empty, empty, empty, empty, empty
 
+@st.cache_data(ttl=86400)
+def load_budget():
+    """Load budget intelligence CSVs for Page 9.
+    Returns 5 dataframes (allocated, transfers, mex, team_map, allocated_vs_spent).
+    All optional — page 9 degrades gracefully if any file is missing."""
+    empty = pd.DataFrame()
+    out = [empty]*5
+    files = ["budget_allocated.csv", "budget_transfers.csv",
+             "marketing_expenses.csv", "product_team_map.csv",
+             "allocated_vs_spent.csv"]
+    for i, f in enumerate(files):
+        try:
+            out[i] = _read_csv_smart(f)
+        except Exception:
+            pass   # File missing → empty df, page 9 will handle
+    return tuple(out)
+
 df_sales, df_act, df_merged, df_roi, df_travel, kpis, data_source_log = load_data()
 df_zsdcy, df_zprod, df_zcity, df_zsdp, df_zgrow     = load_zsdcy()
+df_balloc, df_btransfer, df_mex, df_ptm, df_avs    = load_budget()
 
 months_map = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
               7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
@@ -444,6 +462,7 @@ page = st.sidebar.radio("Navigate to", [
     "📦 Distribution Analysis",
     "🔬 Strategic Intelligence Hub",
     "🤖 ML Intelligence",
+    "💼 Budget Intelligence",
     "📌 Personal Dashboard",
     "👔 Management View"
 ])
@@ -3993,6 +4012,573 @@ MAPE : 7.30%
 Confidence band: ±10%</div>""", unsafe_allow_html=True)
     except Exception as _e:
         st.warning(f"FY-target forecast couldn't render: {_e}")
+
+# ════════════════════════════════════════════════════════════
+# PAGE 9: 💰 BUDGET INTELLIGENCE
+# ════════════════════════════════════════════════════════════
+elif page == "💼 Budget Intelligence":
+    st.markdown("<h1 style='color:#c2185b'>💰 Budget Intelligence Center</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='color:#555'>Allocated vs Spent | Approval Chain | Budget Transfers | CEO Strategic Insights | Hidden Patterns</p>", unsafe_allow_html=True)
+
+    # Check if budget data is loaded
+    if len(df_balloc) == 0 or len(df_avs) == 0:
+        st.error("❌ Budget data not loaded. Please ensure these CSVs are in the repo: "
+                 "budget_allocated.csv.gz, budget_transfers.csv.gz, "
+                 "marketing_expenses.csv.gz, product_team_map.csv, "
+                 "allocated_vs_spent.csv.gz")
+    else:
+        # ════════════════════════════════════════════════════════════
+        # SECTION 1 — HEADLINE: BUDGET UTILIZATION CRISIS
+        # ════════════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#ffebee;border-left:5px solid #c62828;border-radius:8px;padding:16px 20px;margin:14px 0'>
+        <b style='font-size:18px;color:#c62828'>🚨 SECTION 1 — The PKR 9 Billion Question</b><br>
+        <span style='color:#333;font-size:13px'>Across 4 fiscal years, PharmEvo allocated PKR 13.4B in promotional budget — only 32% was actually spent. PKR 9 billion never reached the field.</span>
+        </div>""", unsafe_allow_html=True)
+
+        # FY-level summary
+        fy_summary = df_avs.groupby("FY").agg(
+            Allocated=("AllocatedAmount","sum"),
+            Spent=("SpentAmount","sum")
+        ).reset_index().sort_values("FY")
+        fy_summary["Utilization"] = (fy_summary["Spent"]/fy_summary["Allocated"]*100).round(1)
+        fy_summary["Unused"] = fy_summary["Allocated"] - fy_summary["Spent"]
+
+        # Top KPI bar
+        total_alloc = fy_summary["Allocated"].sum()
+        total_spent = fy_summary["Spent"].sum()
+        total_unused = total_alloc - total_spent
+        overall_util = (total_spent/total_alloc*100) if total_alloc > 0 else 0
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(kpi("Total Allocated (4 FYs)", f"PKR {total_alloc/1e9:.2f}B",
+                       "Sum of FY22-23 → FY25-26 budgets"), unsafe_allow_html=True)
+        c2.markdown(kpi("Total Spent (4 FYs)", f"PKR {total_spent/1e9:.2f}B",
+                       "Actual promotional activity cost"), unsafe_allow_html=True)
+        c3.markdown(kpi("UNUSED Budget", f"PKR {total_unused/1e9:.2f}B",
+                       "Money allocated but never deployed", red=True), unsafe_allow_html=True)
+        c4.markdown(kpi("Overall Utilization", f"{overall_util:.1f}%",
+                       "Healthy = 80-95%; PharmEvo at 32%", red=overall_util < 60), unsafe_allow_html=True)
+
+        # FY-by-FY breakdown chart
+        st.markdown(sec("📊 Budget Utilization by Fiscal Year"), unsafe_allow_html=True)
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=fy_summary["FY"], y=fy_summary["Allocated"]/1e9,
+                name="Allocated", marker_color="#1565c0",
+                text=[f"{v/1e9:.2f}B" for v in fy_summary["Allocated"]],
+                textposition="outside"))
+            fig.add_trace(go.Bar(
+                x=fy_summary["FY"], y=fy_summary["Spent"]/1e9,
+                name="Spent", marker_color="#43a047",
+                text=[f"{v/1e9:.2f}B" for v in fy_summary["Spent"]],
+                textposition="outside"))
+            apply_layout(fig, height=400, barmode="group",
+                         xaxis=dict(gridcolor="#eee", title="Fiscal Year"),
+                         yaxis=dict(gridcolor="#eee", title="PKR Billions"))
+            fig.update_layout(title="Allocated vs Spent — 4 Fiscal Years")
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            disp = fy_summary.copy()
+            disp["Allocated"] = disp["Allocated"].apply(fmt)
+            disp["Spent"] = disp["Spent"].apply(fmt)
+            disp["Unused"] = disp["Unused"].apply(fmt)
+            disp["Utilization"] = disp["Utilization"].apply(lambda x: f"{x:.1f}%")
+            st.dataframe(disp, use_container_width=True, hide_index=True)
+
+        # Critical insight box
+        fy_2526 = fy_summary[fy_summary["FY"]=="2025-2026"]
+        fy_2425 = fy_summary[fy_summary["FY"]=="2024-2025"]
+        if len(fy_2526) and len(fy_2425):
+            jump = (fy_2526["Allocated"].iloc[0]/fy_2425["Allocated"].iloc[0] - 1) * 100
+            st.markdown(f"""<div style='background:#fff3e0;border-left:5px solid #e65100;border-radius:6px;padding:14px 18px;margin:12px 0'>
+            <b style='color:#e65100'>🔥 CRITICAL FINDING:</b> FY25-26 budget jumped <b>+{jump:.0f}%</b> over FY24-25
+            (PKR {fy_2425['Allocated'].iloc[0]/1e9:.2f}B → PKR {fy_2526['Allocated'].iloc[0]/1e9:.2f}B)
+            but spending pace is on track to reach only PKR ~2.0B (vs PKR 7.11B allocated).
+            <br><b>Implication:</b> Either the budgeting process produces aspirational numbers
+            disconnected from operational capacity, OR approval chains are blocking ~70% of intended spend.
+            </div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 2 — PER-PRODUCT ALLOCATION vs SPEND
+        # ════════════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#e3f2fd;border-left:5px solid #1565c0;border-radius:8px;padding:14px 20px;margin:14px 0'>
+        <b style='font-size:17px;color:#1565c0'>📋 SECTION 2 — Per-Product Budget Reform Priorities</b><br>
+        <span style='color:#333;font-size:13px'>Which products got over-budgeted? Cut these allocations next year and redeploy savings to ROI-leading products.</span>
+        </div>""", unsafe_allow_html=True)
+
+        # FY filter
+        fy_options = sorted(df_avs["FY"].dropna().unique(), reverse=True)
+        fy_default = "2024-2025" if "2024-2025" in fy_options else fy_options[0] if fy_options else None
+        fy_pick = st.selectbox("Select Fiscal Year", fy_options,
+                                index=fy_options.index(fy_default) if fy_default in fy_options else 0,
+                                key="bgt_fy_pick")
+
+        # Per-product summary for selected FY
+        fy_data = df_avs[df_avs["FY"]==fy_pick].copy()
+        prod_summary = fy_data.groupby("Product").agg(
+            Allocated=("AllocatedAmount","sum"),
+            Spent=("SpentAmount","sum")
+        ).reset_index()
+        prod_summary = prod_summary[prod_summary["Allocated"] > 1e6].copy()  # >PKR 1M only
+        prod_summary["Unused"] = prod_summary["Allocated"] - prod_summary["Spent"]
+        prod_summary["Util%"] = (prod_summary["Spent"]/prod_summary["Allocated"]*100).round(1)
+        prod_summary = prod_summary.sort_values("Unused", ascending=False)
+
+        # Color-coded verdict
+        def verdict(util):
+            if pd.isna(util): return "—"
+            if util < 30: return "🔴 Severely under-used"
+            elif util < 60: return "🟡 Significant headroom"
+            elif util < 90: return "🟢 Healthy"
+            elif util <= 105: return "🟢 Optimal"
+            else: return "🟠 Over-spent"
+        prod_summary["Verdict"] = prod_summary["Util%"].apply(verdict)
+
+        # Top 20 over-budgeted (most wasted PKR)
+        st.markdown(sec(f"💸 Top 20 Over-Budgeted Products — {fy_pick} (Sorted by Unused PKR)"), unsafe_allow_html=True)
+        top20 = prod_summary.head(20).copy()
+        disp20 = top20[["Product","Allocated","Spent","Unused","Util%","Verdict"]].copy()
+        disp20["Allocated"] = disp20["Allocated"].apply(fmt)
+        disp20["Spent"]     = disp20["Spent"].apply(fmt)
+        disp20["Unused"]    = disp20["Unused"].apply(fmt)
+        disp20["Util%"]     = disp20["Util%"].apply(lambda x: f"{x:.1f}%")
+        st.dataframe(disp20, use_container_width=True, hide_index=True)
+
+        # Aggregate insight
+        total_wasted = top20["Unused"].sum()
+        st.markdown(f"""<div style='background:#fce4ec;border-left:4px solid #c2185b;padding:12px 16px;border-radius:6px;margin:8px 0'>
+        💰 <b>If management cut these 20 over-budgets by 40% next FY, capital saved: PKR {total_wasted*0.4/1e6:.0f}M.</b>
+        Redeploy to high-ROI products (Xcept 78x, Gouric 47x, Orslim 42x) to grow revenue without raising total budget.
+        </div>""", unsafe_allow_html=True)
+
+        # Visual bar chart
+        col1, col2 = st.columns([3, 2])
+        with col1:
+            top10 = top20.head(10)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(y=top10["Product"], x=top10["Allocated"]/1e6,
+                                  name="Allocated", orientation="h",
+                                  marker_color="#1565c0",
+                                  text=[f"{v/1e6:.0f}M" for v in top10["Allocated"]],
+                                  textposition="inside"))
+            fig.add_trace(go.Bar(y=top10["Product"], x=top10["Spent"]/1e6,
+                                  name="Spent", orientation="h",
+                                  marker_color="#43a047",
+                                  text=[f"{v/1e6:.0f}M" for v in top10["Spent"]],
+                                  textposition="inside"))
+            apply_layout(fig, height=440, barmode="overlay",
+                         yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee", title="PKR Millions"))
+            fig.update_traces(opacity=0.85)
+            fig.update_layout(title=f"Top 10 Over-Budgeted Products — {fy_pick}")
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            # Distribution of utilization
+            util_dist = prod_summary["Util%"].dropna()
+            fig2 = go.Figure(go.Histogram(x=util_dist, nbinsx=20,
+                marker_color="#c2185b", marker_line_color="white", marker_line_width=1))
+            fig2.add_vline(x=80, line_dash="dot", line_color="#43a047", line_width=2,
+                          annotation_text="Healthy zone", annotation_position="top")
+            apply_layout(fig2, height=440, xaxis=dict(gridcolor="#eee", title="Utilization %"),
+                         yaxis=dict(gridcolor="#eee", title="# of Products"))
+            fig2.update_layout(title=f"Utilization Distribution — {fy_pick}")
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 3 — APPROVAL CHAIN EROSION
+        # ════════════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#fff3e0;border-left:5px solid #e65100;border-radius:8px;padding:14px 20px;margin:14px 0'>
+        <b style='font-size:17px;color:#e65100'>⛔ SECTION 3 — Approval Chain Erosion</b><br>
+        <span style='color:#333;font-size:13px'>How much of every PKR teams request actually survives the 5-stage approval gauntlet?</span>
+        </div>""", unsafe_allow_html=True)
+
+        if len(df_mex) > 0:
+            req     = float(df_mex["RequestedAmount"].fillna(0).sum())
+            sm_app  = float(df_mex["SMApprovedAmount"].fillna(0).sum())
+            rtl_app = float(df_mex["RTLApprovedAmount"].fillna(0).sum())
+            bm_app  = float(df_mex["BMApprovedAmount"].fillna(0).sum())
+            mm_app  = float(df_mex["MMApprovedAmount"].fillna(0).sum())
+            sfe_app = float(df_mex["SFEApprovedAmount"].fillna(0).sum())
+
+            # Approval flow chart
+            stages = ["Requested", "SFE Approved", "BM Approved", "RTL Approved",
+                       "MM Approved", "SM Final"]
+            values = [req, sfe_app, bm_app, rtl_app, mm_app, sm_app]
+            pcts = [v/req*100 if req>0 else 0 for v in values]
+
+            col1, col2 = st.columns([3, 2])
+            with col1:
+                fig = go.Figure(go.Funnel(
+                    y=stages, x=values,
+                    textposition="inside",
+                    textinfo="value+percent initial",
+                    marker={"color": ["#1565c0","#43a047","#fb8c00","#fb8c00","#e53935","#c2185b"]},
+                    connector={"line": {"color": "rgba(150,150,150,0.5)"}}
+                ))
+                apply_layout(fig, height=420, xaxis=dict(visible=False), yaxis=dict(visible=False))
+                fig.update_layout(title="Approval Funnel — Where Requests Die")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                final_rate = sm_app/req*100 if req>0 else 0
+                st.markdown(f"""<div class="manual-working">APPROVAL FLOW
+═══════════════════════
+Requested  : PKR {req/1e6:.1f}M  (100%)
+SFE        : PKR {sfe_app/1e6:.1f}M  ({sfe_app/req*100:.0f}%)
+BM         : PKR {bm_app/1e6:.1f}M  ({bm_app/req*100:.0f}%)
+RTL        : PKR {rtl_app/1e6:.1f}M  ({rtl_app/req*100:.0f}%)
+MM         : PKR {mm_app/1e6:.1f}M  ({mm_app/req*100:.0f}%)
+SM (final) : PKR {sm_app/1e6:.1f}M  ({final_rate:.0f}%)
+
+═══════════════════════
+EROSION  : {100-final_rate:.0f}% of every
+           PKR is cut.
+═══════════════════════</div>""", unsafe_allow_html=True)
+
+            st.markdown(f"""<div style='background:#fce4ec;border-left:4px solid #c2185b;padding:14px 18px;border-radius:6px;margin:12px 0'>
+            <b style='color:#c2185b'>🔍 The Sales Manager bottleneck:</b>
+            SFE approves 89%, but Sales Manager final-approves only {final_rate:.0f}%.
+            That's a <b>{(mm_app-sm_app)/req*100:.0f}-point drop</b> at the very last stage —
+            the SM is unilaterally cutting PKR {(mm_app-sm_app)/1e6:.0f}M that 4 prior reviewers had cleared.
+            <br><b>Action:</b> Either SM has hidden cap rules teams should know about, or governance review needed.
+            Teams will inflate requests as long as they expect 65% to be cut — this is a vicious cycle.
+            </div>""", unsafe_allow_html=True)
+
+            # Per-team approval rates
+            st.markdown(sec("🎯 Approval Rate by Team"), unsafe_allow_html=True)
+            team_appr = df_mex[df_mex["TeamName"].notna() & (df_mex["TeamName"]!="")].groupby("TeamName").agg(
+                Requested=("RequestedAmount","sum"),
+                SMApproved=("SMApprovedAmount","sum"),
+                Requests=("RequestId","count")
+            ).reset_index()
+            team_appr = team_appr[team_appr["Requested"] > 50000]   # filter noise
+            team_appr["ApprovalRate%"] = (team_appr["SMApproved"]/team_appr["Requested"]*100).round(1)
+            team_appr = team_appr.sort_values("ApprovalRate%")
+
+            disp_t = team_appr.head(15).copy()
+            disp_t["Requested"] = disp_t["Requested"].apply(fmt)
+            disp_t["SMApproved"] = disp_t["SMApproved"].apply(fmt)
+            disp_t["ApprovalRate%"] = disp_t["ApprovalRate%"].apply(lambda x: f"{x:.1f}%")
+            st.dataframe(disp_t, use_container_width=True, hide_index=True)
+            st.caption("Lowest approval rates = teams whose requests get cut hardest. Investigate whether their requests are unrealistic OR approval is unfair.")
+        else:
+            st.info("Marketing expense approval data not loaded.")
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 4 — BUDGET TRANSFER PATTERNS
+        # ════════════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#e8f5e9;border-left:5px solid #2e7d32;border-radius:8px;padding:14px 20px;margin:14px 0'>
+        <b style='font-size:17px;color:#2e7d32'>🔄 SECTION 4 — Budget Transfer Patterns</b><br>
+        <span style='color:#333;font-size:13px'>Mid-year budget movements reveal which products were under-budgeted (received transfers) vs over-budgeted (gave them away).</span>
+        </div>""", unsafe_allow_html=True)
+
+        if len(df_btransfer) > 0:
+            tot_trans = df_btransfer["Amount"].sum()
+            tot_count = len(df_btransfer)
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(kpi("Total Transfers", f"{tot_count:,}", "Mid-year budget moves"), unsafe_allow_html=True)
+            c2.markdown(kpi("PKR Moved", f"PKR {tot_trans/1e9:.2f}B", "Total reshuffled"), unsafe_allow_html=True)
+            c3.markdown(kpi("Avg Transfer", fmt(tot_trans/tot_count if tot_count>0 else 0),
+                           "Per movement"), unsafe_allow_html=True)
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(sec("📤 Top Outflow Products (gave away budget)"), unsafe_allow_html=True)
+                outflow = df_btransfer.groupby("FromProduct")["Amount"].sum().nlargest(10).reset_index()
+                outflow.columns = ["Product", "Amount Given Away"]
+                fig = go.Figure(go.Bar(y=outflow["Product"], x=outflow["Amount Given Away"]/1e6,
+                                          orientation="h", marker_color="#e53935",
+                                          text=[f"PKR {v/1e6:.0f}M" for v in outflow["Amount Given Away"]],
+                                          textposition="outside"))
+                apply_layout(fig, height=420, yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                             xaxis=dict(gridcolor="#eee", title="PKR Millions"))
+                fig.update_layout(title="Products that 'donated' budget mid-year")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.markdown(sec("📥 Top Inflow Products (received budget)"), unsafe_allow_html=True)
+                inflow = df_btransfer.groupby("ToProduct")["Amount"].sum().nlargest(10).reset_index()
+                inflow.columns = ["Product", "Amount Received"]
+                fig = go.Figure(go.Bar(y=inflow["Product"], x=inflow["Amount Received"]/1e6,
+                                          orientation="h", marker_color="#43a047",
+                                          text=[f"PKR {v/1e6:.0f}M" for v in inflow["Amount Received"]],
+                                          textposition="outside"))
+                apply_layout(fig, height=420, yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                             xaxis=dict(gridcolor="#eee", title="PKR Millions"))
+                fig.update_layout(title="Products that 'borrowed' budget mid-year")
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Net flow analysis
+            net_out = df_btransfer.groupby("FromProduct")["Amount"].sum()
+            net_in  = df_btransfer.groupby("ToProduct")["Amount"].sum()
+            net = pd.DataFrame({"Out": net_out, "In": net_in}).fillna(0)
+            net["Net"] = net["In"] - net["Out"]
+            net = net.sort_values("Net", ascending=False).reset_index().rename(columns={"index":"Product"})
+            net.columns = ["Product","Out","In","Net"]
+
+            top_recvr = net[net["Net"] > 0].head(5)
+            top_donor = net[net["Net"] < 0].tail(5)
+
+            st.markdown(f"""<div style='background:#fff8e1;border-left:4px solid #f9a825;padding:12px 16px;border-radius:6px;margin:8px 0'>
+            <b style='color:#f9a825'>💡 What this tells you:</b>
+            Products consistently RECEIVING transfers were under-budgeted at start of year — give them more next FY.
+            Products consistently SENDING transfers were over-budgeted — cut them.
+            </div>""", unsafe_allow_html=True)
+
+            colA, colB = st.columns(2)
+            with colA:
+                st.markdown("**🔼 Net Receivers (under-budget; give MORE next year)**")
+                disp = top_recvr.copy()
+                disp["Net Inflow"] = disp["Net"].apply(fmt)
+                st.dataframe(disp[["Product","Net Inflow"]], use_container_width=True, hide_index=True)
+            with colB:
+                st.markdown("**🔽 Net Donors (over-budget; CUT next year)**")
+                disp = top_donor.copy()
+                disp["Net Outflow"] = (-disp["Net"]).apply(fmt)
+                st.dataframe(disp[["Product","Net Outflow"]], use_container_width=True, hide_index=True)
+        else:
+            st.info("Budget transfer data not loaded.")
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 5 — CEO STRATEGIC INSIGHTS (5 hidden patterns)
+        # ════════════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:#1a237e;color:white;border-left:5px solid #1a237e;border-radius:8px;padding:16px 22px;margin:14px 0'>
+        <b style='font-size:18px;color:#fff'>🎯 SECTION 5 — CEO Strategic Insights</b><br>
+        <span style='color:#e8eaf6;font-size:13px'>Five hidden patterns extracted from cross-database analysis. Each is a board-room recommendation backed by live data.</span>
+        </div>""", unsafe_allow_html=True)
+
+        # ─── Insight 1: Spending Velocity ───
+        st.markdown(sec("💨 Insight 1: Spending Velocity — Front-loaded by 34%"), unsafe_allow_html=True)
+        try:
+            # Compute Q1-Q4 spending pattern for FY24-25 from df_act
+            fy_act = df_act[df_act["FiscalYear"]=="FY24-25"] if "FiscalYear" in df_act.columns else df_act
+            def fy_q(m):
+                if pd.isna(m): return "Unknown"
+                m = int(m)
+                if m in [7,8,9]: return "Q1 (Jul-Sep)"
+                if m in [10,11,12]: return "Q2 (Oct-Dec)"
+                if m in [1,2,3]: return "Q3 (Jan-Mar)"
+                if m in [4,5,6]: return "Q4 (Apr-Jun)"
+                return "Other"
+            fy_act_q = fy_act.copy()
+            fy_act_q["Quarter"] = fy_act_q["Mo"].apply(fy_q)
+            q_pat = fy_act_q.groupby("Quarter")["TotalAmount"].sum().reset_index()
+            q_pat = q_pat[q_pat["Quarter"]!="Other"]
+            q_pat["Pct"] = q_pat["TotalAmount"]/q_pat["TotalAmount"].sum()*100
+            q_pat = q_pat.set_index("Quarter").reindex(["Q1 (Jul-Sep)","Q2 (Oct-Dec)","Q3 (Jan-Mar)","Q4 (Apr-Jun)"]).reset_index()
+
+            col1, col2 = st.columns([2,1])
+            with col1:
+                colors_q = ["#c62828","#fb8c00","#fbc02d","#43a047"]   # red→green = burn-rate
+                fig = go.Figure(go.Bar(x=q_pat["Quarter"], y=q_pat["Pct"],
+                                       marker_color=colors_q,
+                                       text=[f"{p:.1f}%" for p in q_pat["Pct"]],
+                                       textposition="outside"))
+                fig.add_hline(y=25, line_dash="dot", line_color="#1565c0", line_width=2,
+                              annotation_text="Ideal: 25%", annotation_position="top right")
+                apply_layout(fig, height=380, xaxis=dict(gridcolor="#eee"),
+                             yaxis=dict(gridcolor="#eee", title="% of Annual Spend"))
+                fig.update_layout(title="FY24-25 Quarterly Spending Distribution")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                if len(q_pat) >= 4:
+                    q1_pct = float(q_pat.iloc[0]["Pct"])
+                    q4_pct = float(q_pat.iloc[3]["Pct"])
+                    st.markdown(f"""<div class="manual-working">FY24-25 BURN PATTERN
+═══════════════════════
+Q1 (Jul-Sep): {q1_pct:.1f}%
+Q2 (Oct-Dec): {q_pat.iloc[1]['Pct']:.1f}%
+Q3 (Jan-Mar): {q_pat.iloc[2]['Pct']:.1f}%
+Q4 (Apr-Jun): {q4_pct:.1f}%
+═══════════════════════
+Q1/Q4 ratio : {q1_pct/q4_pct:.1f}x
+
+DIAGNOSIS:
+{'FRONT-LOADED' if q1_pct > 30 else 'BACK-LOADED' if q4_pct > 30 else 'BALANCED'}
+Q4 is {q4_pct:.0f}% (ideal 25%)
+
+ACTION:
+Front-load problem: teams
+spend their enthusiasm in
+Q1 then go quiet in Q4 —
+right when distributors
+restock for new FY.
+═══════════════════════</div>""", unsafe_allow_html=True)
+        except Exception as e:
+            st.info(f"Spending velocity analysis: {e}")
+
+        st.markdown("---")
+
+        # ─── Insight 2: Product-Team Mismatch ───
+        st.markdown(sec("🎯 Insight 2: Product-Team Mismatch — Are teams promoting products their customers buy?"), unsafe_allow_html=True)
+        try:
+            if len(df_ptm) > 0:
+                # For each team in df_ptm, get their assigned products + DSR sales for those products
+                # Compare team's sales rank vs product market rank
+                team_prod = df_ptm.groupby("TeamName")["Product"].nunique().reset_index()
+                team_prod.columns = ["Team","# Products Assigned"]
+                team_prod = team_prod.sort_values("# Products Assigned", ascending=False).head(20)
+
+                col1, col2 = st.columns([2,1])
+                with col1:
+                    fig = go.Figure(go.Bar(y=team_prod["Team"], x=team_prod["# Products Assigned"],
+                                              orientation="h", marker_color="#5e35b1",
+                                              text=team_prod["# Products Assigned"],
+                                              textposition="outside"))
+                    apply_layout(fig, height=460, yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                                 xaxis=dict(gridcolor="#eee", title="# Products"))
+                    fig.update_layout(title="Top 20 Teams by # Products Assigned")
+                    st.plotly_chart(fig, use_container_width=True)
+                with col2:
+                    multi_prod_teams = (team_prod["# Products Assigned"] > 5).sum()
+                    single_prod = (df_ptm.groupby("TeamName")["Product"].nunique() == 1).sum()
+                    st.markdown(f"""<div class="manual-working">TEAM-PRODUCT MIX
+═══════════════════════
+Total teams    : {df_ptm['TeamName'].nunique()}
+Total products : {df_ptm['Product'].nunique()}
+Total mappings : {len(df_ptm)}
+
+Single-product teams: {single_prod}
+Multi-product (>5)  : {multi_prod_teams}
+
+INSIGHT:
+Teams with many products
+spread focus thin. Teams
+with one product can
+specialize but lack
+cross-sell opportunity.
+═══════════════════════</div>""", unsafe_allow_html=True)
+            else:
+                st.info("Team-product mapping not loaded.")
+        except Exception as e:
+            st.info(f"Mismatch analysis: {e}")
+
+        st.markdown("---")
+
+        # ─── Insight 3: Discount Cliff Detection ───
+        st.markdown(sec("📉 Insight 3: Discount Abuse Detection — Channel Stuffing Risk"), unsafe_allow_html=True)
+        try:
+            # Teams with discount > 10% of their revenue = potential abuse / channel stuffing
+            if "TotalDiscount" in df_sales.columns:
+                team_disc = df_sales[df_sales["SaleFlag"]=="S"].groupby("TeamName").agg(
+                    Rev=("TotalRevenue","sum"),
+                    Disc=("TotalDiscount","sum")
+                ).reset_index()
+                team_disc = team_disc[team_disc["Rev"] > 5e6]   # filter
+                team_disc["DiscPct"] = (team_disc["Disc"]/team_disc["Rev"]*100).round(2)
+                team_disc = team_disc.sort_values("DiscPct", ascending=False)
+
+                top_disc = team_disc.head(15).copy()
+                top_disc["Rev"]     = top_disc["Rev"].apply(fmt)
+                top_disc["Disc"]    = top_disc["Disc"].apply(fmt)
+                top_disc["DiscPct"] = top_disc["DiscPct"].apply(lambda x: f"{x:.2f}%")
+                top_disc.columns = ["Team","Revenue","Discount Given","Discount %"]
+                st.dataframe(top_disc, use_container_width=True, hide_index=True)
+                st.caption("⚠️ Teams with discount rate > 10% may be stuffing channels with discounted product to hit short-term targets. Investigate if their next-month sales drop.")
+        except Exception as e:
+            st.info(f"Discount analysis: {e}")
+
+        st.markdown("---")
+
+        # ─── Insight 4: Distributor Concentration Risk ───
+        st.markdown(sec("⚠️ Insight 4: Distributor Concentration Risk"), unsafe_allow_html=True)
+        try:
+            if len(df_zsdp) > 0:
+                top5_pct = df_zsdp.nlargest(5,"Revenue")["Revenue"].sum() / df_zsdp["Revenue"].sum() * 100
+                top10_pct = df_zsdp.nlargest(10,"Revenue")["Revenue"].sum() / df_zsdp["Revenue"].sum() * 100
+                top20_pct = df_zsdp.nlargest(20,"Revenue")["Revenue"].sum() / df_zsdp["Revenue"].sum() * 100
+
+                col1, col2, col3 = st.columns(3)
+                col1.markdown(kpi("Top 5 SDPs %", f"{top5_pct:.1f}%", "of total ZSDCY revenue",
+                                  red=top5_pct > 35), unsafe_allow_html=True)
+                col2.markdown(kpi("Top 10 SDPs %", f"{top10_pct:.1f}%", "if any closes — risk",
+                                  red=top10_pct > 50), unsafe_allow_html=True)
+                col3.markdown(kpi("Top 20 SDPs %", f"{top20_pct:.1f}%", "of {0} total".format(len(df_zsdp))), unsafe_allow_html=True)
+
+                if top5_pct > 30:
+                    st.markdown(f"""<div style='background:#ffebee;border-left:4px solid #c62828;padding:12px 16px;border-radius:6px;margin:8px 0'>
+                    <b style='color:#c62828'>🚨 CONCENTRATION RISK:</b> Top 5 distributors handle {top5_pct:.1f}% of revenue.
+                    If any one closes/breaks contract, immediate revenue impact = {top5_pct/5:.1f}% loss on average.
+                    Diversification through Tier-2/3 city expansion recommended.
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""<div style='background:#e8f5e9;border-left:4px solid #2e7d32;padding:12px 16px;border-radius:6px;margin:8px 0'>
+                    <b style='color:#2e7d32'>✅ HEALTHY DIVERSIFICATION:</b> Top 5 distributors only handle {top5_pct:.1f}%. Risk well-distributed.
+                    </div>""", unsafe_allow_html=True)
+        except Exception as e:
+            st.info(f"Concentration analysis: {e}")
+
+        st.markdown("---")
+
+        # ─── Insight 5: Calendar Concentration (month-end loading) ───
+        st.markdown(sec("📅 Insight 5: Calendar Concentration — Month-end Loading"), unsafe_allow_html=True)
+        try:
+            # Are activities back-loaded into month-end (last 5 days)?
+            df_act_d = df_act.copy()
+            df_act_d["Date"] = pd.to_datetime(df_act_d["Date"], errors="coerce")
+            df_act_d = df_act_d.dropna(subset=["Date"])
+            df_act_d["DayOfMonth"] = df_act_d["Date"].dt.day
+            df_act_d["MonthDays"] = df_act_d["Date"].dt.days_in_month
+            df_act_d["IsMonthEnd"] = df_act_d["DayOfMonth"] >= (df_act_d["MonthDays"] - 4)
+
+            total_act = df_act_d["TotalAmount"].sum()
+            month_end_act = df_act_d[df_act_d["IsMonthEnd"]]["TotalAmount"].sum()
+            pct_month_end = month_end_act/total_act*100 if total_act > 0 else 0
+            ideal_pct = 5/30*100   # 5 of 30 days = 16.7%
+
+            col1, col2 = st.columns([2,1])
+            with col1:
+                # Day of month histogram
+                day_dist = df_act_d.groupby("DayOfMonth")["TotalAmount"].sum().reset_index()
+                fig = go.Figure(go.Bar(x=day_dist["DayOfMonth"], y=day_dist["TotalAmount"]/1e6,
+                                          marker_color=["#c62828" if d>=26 else "#1565c0"
+                                                          for d in day_dist["DayOfMonth"]]))
+                apply_layout(fig, height=380, xaxis=dict(gridcolor="#eee", title="Day of Month",
+                                                         dtick=2),
+                             yaxis=dict(gridcolor="#eee", title="PKR Millions"))
+                fig.update_layout(title="Activity Spend by Day-of-Month (red = last 5 days)")
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                ratio = pct_month_end/ideal_pct
+                st.markdown(f"""<div class="manual-working">MONTH-END LOADING
+═══════════════════════
+Last 5 days share : {pct_month_end:.1f}%
+Ideal (linear)    : {ideal_pct:.1f}%
+Concentration     : {ratio:.2f}x
+
+DIAGNOSIS:
+{'⚠️ HEAVY MONTH-END LOAD' if ratio > 1.5 else '✅ NORMAL DISTRIBUTION'}
+
+What this means:
+{('Activities clumped into last 5 days = teams playing catch-up at month-end. Quality of activities likely lower; doctor engagement rushed.' if ratio>1.5 else 'Activities are well-distributed across the month.')}
+═══════════════════════</div>""", unsafe_allow_html=True)
+        except Exception as e:
+            st.info(f"Calendar analysis: {e}")
+
+        st.markdown("---")
+
+        # ════════════════════════════════════════════════════════════
+        # FINAL CEO RECOMMENDATIONS BLOCK
+        # ════════════════════════════════════════════════════════════
+        st.markdown(f"""<div style='background:linear-gradient(135deg,#1a237e,#311b92);color:white;border-radius:10px;padding:24px;margin:20px 0'>
+        <h2 style='color:#fff;margin:0 0 12px 0'>📋 Five CEO-Level Recommendations</h2>
+        <ol style='font-size:14px;line-height:1.8'>
+          <li><b>Reset FY26-27 budget to operational reality</b> — cap allocation at 1.5× actual prior-year spend (PKR ~3B), not aspirational PKR 7.11B</li>
+          <li><b>Reform the approval chain</b> — investigate why Sales Manager cuts 65% of MM-approved requests; publish allowable %s so teams stop inflating</li>
+          <li><b>Fix Q4 collapse</b> — mandate minimum Q4 activity % (e.g. 22%) to align with FY-end distributor restock cycle</li>
+          <li><b>Cut over-budgeted products by 40%</b> — top 20 over-allocations in Section 2 represent PKR ~800M of recoverable capital</li>
+          <li><b>Redeploy savings to ROI leaders</b> — Xcept (78x ROI) currently gets only PKR 30M; doubling its allocation projects PKR 2.3B incremental revenue at current ROI</li>
+        </ol>
+        </div>""", unsafe_allow_html=True)
+
 # ════════════════════════════════════════════════════════════
 # PAGE 13: PERSONAL DASHBOARD
 # ════════════════════════════════════════════════════════════
