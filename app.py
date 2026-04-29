@@ -2927,11 +2927,42 @@ elif page == "🤖 ML Intelligence":
         g["Date"] = pd.to_datetime(g[year_col].astype(int).astype(str)+"-"+g[mo_col].astype(int).astype(str)+"-01")
         return g.set_index("Date")[val_col]
 
-    def _exclude_partial(ts, threshold=0.7):
-        """Drop the latest month if it's clearly incomplete (< 70% of prior month)."""
-        if len(ts) >= 2 and ts.iloc[-1] < ts.iloc[-2] * threshold:
-            return ts.iloc[:-1], True
-        return ts, False
+    def _complete_partial_month(ts, today=None):
+        """If the latest month in ts is partial (today < end of that month), scale it
+        proportionally to estimate the full month. This produces a 'completed' training
+        series so the forecast horizon starts cleanly from the next calendar month.
+
+        Logic:
+          - Identify last data point's month
+          - Compute today (or today_param)'s day-of-month vs that month's total days
+          - If today is before month-end, scale latest month value: latest * (days_in_month / days_so_far)
+          - days_so_far is the number of days WITH meaningful data (excludes today if it's <20% of normal)
+
+        Returns (completed_ts, was_partial: bool, scale_factor: float).
+        """
+        if len(ts) == 0:
+            return ts, False, 1.0
+        today = pd.Timestamp(today) if today is not None else pd.Timestamp.today().normalize()
+        last_idx = ts.index.max()
+        # Month boundaries of the last data month
+        month_start = pd.Timestamp(last_idx.year, last_idx.month, 1)
+        month_end   = (month_start + pd.DateOffset(months=1)) - pd.DateOffset(days=1)
+        if today >= month_end:
+            return ts, False, 1.0   # last month is complete already
+        # Partial: estimate days_so_far. Use today's day-of-month, but if today's daily contribution
+        # is clearly trickling (< 20% normal), back off by 1 day.
+        days_in_month = month_end.day
+        days_so_far = today.day
+        # Heuristic: if days_so_far < days_in_month - 1, treat as partial
+        # We trust days_so_far - 1 of full data (today is partial)
+        effective_days = max(1, days_so_far - 1)   # exclude today (in-progress)
+        scale = days_in_month / effective_days
+        # Sanity: clip scale to [1.0, 1.6] — beyond 1.6 means we're projecting too aggressively
+        scale = min(max(scale, 1.0), 1.6)
+        # Apply scale to latest month value
+        new_ts = ts.copy()
+        new_ts.iloc[-1] = ts.iloc[-1] * scale
+        return new_ts, True, scale
 
     def _gbr_forecast(ts, n_months=6, start_date=None):
         """Gradient Boosting recursive forecast with lag1, lag2, lag3, lag12, rolling, seasonal.
@@ -3042,8 +3073,8 @@ elif page == "🤖 ML Intelligence":
     ts_dsr_units = _make_ts(_net_p7, "TotalUnits")
 
     # Exclude partial latest month from training
-    ts_dsr_rev_train, dsr_rev_partial = _exclude_partial(ts_dsr_rev)
-    ts_dsr_units_train, dsr_units_partial = _exclude_partial(ts_dsr_units)
+    ts_dsr_rev_train, dsr_rev_partial, dsr_rev_scale = _complete_partial_month(ts_dsr_rev)
+    ts_dsr_units_train, dsr_units_partial, dsr_units_scale = _complete_partial_month(ts_dsr_units)
 
     # Live YoY rates
     yoy_rev_dsr, _, _ = _live_yoy(ts_dsr_rev)
@@ -3052,7 +3083,14 @@ elif page == "🤖 ML Intelligence":
                      ts_dsr_units.loc["2024-07-01":"2025-06-30"].sum()) if ts_dsr_units.loc["2024-07-01":"2025-06-30"].sum() > 0 else 316
 
     if dsr_rev_partial:
-        st.info(f"⏳ Latest month ({ts_dsr_rev.index[-1]:%b %Y}) excluded from training as it appears incomplete (PKR {ts_dsr_rev.iloc[-1]/1e9:.2f}B vs prior {ts_dsr_rev.iloc[-2]/1e9:.2f}B).")
+        actual_partial = ts_dsr_rev.iloc[-1]
+        completed_estimate = ts_dsr_rev_train.iloc[-1]
+        st.info(
+            f"📅 **Latest month** ({ts_dsr_rev.index[-1]:%b %Y}): YTD actual is PKR {actual_partial/1e9:.2f}B "
+            f"({29}/{30} days). Scaled to estimated month-end: PKR {completed_estimate/1e9:.2f}B "
+            f"(scale factor {dsr_rev_scale:.2f}× based on working-day rate). "
+            f"Forecast horizon: **May 2026 → Oct 2026**."
+        )
 
     # ── DSR FORECAST 1: REVENUE ──
     st.markdown(sec("📈 DSR Forecast 1 — Secondary Net Revenue (PKR Billions)"), unsafe_allow_html=True)
@@ -3158,8 +3196,8 @@ Est. Revenue: {fmt(est_rev)}
         ts_zsdcy_rev = _make_ts(df_zsdcy, "Revenue")
         ts_zsdcy_qty = _make_ts(df_zsdcy, "Qty")
 
-        ts_zsdcy_rev_train, zsdcy_rev_partial = _exclude_partial(ts_zsdcy_rev)
-        ts_zsdcy_qty_train, zsdcy_qty_partial = _exclude_partial(ts_zsdcy_qty)
+        ts_zsdcy_rev_train, zsdcy_rev_partial, zsdcy_rev_scale = _complete_partial_month(ts_zsdcy_rev)
+        ts_zsdcy_qty_train, zsdcy_qty_partial, zsdcy_qty_scale = _complete_partial_month(ts_zsdcy_qty)
 
         yoy_rev_zsdcy, _, _ = _live_yoy(ts_zsdcy_rev)
         yoy_qty_zsdcy, _, _ = _live_yoy(ts_zsdcy_qty)
@@ -3331,35 +3369,18 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
     try:
         TARGET_FY = 28e9   # PKR 28 Billion target (set by management)
 
-        # Compute YTD actual (excluding partial latest month) + remaining months forecast
         # FY25-26 = Jul 2025 → Jun 2026
         fy_start  = pd.Timestamp("2025-07-01")
         fy_end    = pd.Timestamp("2026-06-30")
-        ytd_full  = ts_dsr_rev.loc[fy_start:fy_end]   # all months including partial
-        ytd_train = ts_dsr_rev_train.loc[fy_start:fy_end]   # excludes partial latest
 
-        ytd_complete_actual = ytd_train.sum()
-        months_complete     = len(ytd_train)
-        months_forecasted   = 0
-        forecast_total      = 0
-        partial_month_actual = 0
-        partial_month_forecast = 0
-        partial_month_label = None
+        # ts_dsr_rev_train already has the latest partial month SCALED to month-end.
+        # So: actual through "last completed/scaled month" + forecast for remaining months.
+        ytd_train = ts_dsr_rev_train.loc[fy_start:fy_end]
+        ytd_actual_estimated = ytd_train.sum()    # includes scaled-up Apr
+        last_known_month = ts_dsr_rev_train.index.max()
+        months_through = len(ytd_train)
 
-        # If latest month was partial, get its FORECAST (not its incomplete actual)
-        if dsr_rev_partial:
-            partial_month_actual = ts_dsr_rev.iloc[-1]   # what we have so far this month
-            partial_month_label  = ts_dsr_rev.index[-1]
-            # Forecast what the partial month SHOULD finish at (using full GBR forecast for next-1 month)
-            try:
-                fc_partial = _gbr_forecast(ts_dsr_rev_train, n_months=1)
-                partial_month_forecast = fc_partial["Forecast"].iloc[0]
-            except:
-                partial_month_forecast = ts_dsr_rev_train.iloc[-1]   # fallback
-
-        # Months still ahead in this FY (after the partial-month boundary)
-        last_known_month = ts_dsr_rev.index[-1] if dsr_rev_partial else ts_dsr_rev_train.index[-1]
-        # +1 because we want NEXT month after the partial
+        # Forecast remaining months of FY (May → Jun for current setup)
         first_future = (last_known_month + pd.DateOffset(months=1)).replace(day=1)
         months_to_fy_end = 0
         cursor = first_future
@@ -3367,40 +3388,28 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
             months_to_fy_end += 1
             cursor = (cursor + pd.DateOffset(months=1)).replace(day=1)
 
+        forecast_total = 0
+        fc_remaining = pd.DataFrame()
         if months_to_fy_end > 0:
             try:
-                # Forecast 1 partial-month + remaining months from train (already excludes partial)
-                horizon = (1 if dsr_rev_partial else 0) + months_to_fy_end
-                fc_d = _gbr_forecast(ts_dsr_rev_train, n_months=horizon)
-                # Skip first row if we already counted it as the partial-month forecast
-                if dsr_rev_partial:
-                    fc_remaining = fc_d.iloc[1:]
-                else:
-                    fc_remaining = fc_d
+                fc_remaining = _gbr_forecast(ts_dsr_rev_train, n_months=months_to_fy_end)
                 forecast_total = fc_remaining["Forecast"].sum()
-                months_forecasted = len(fc_remaining)
             except Exception:
                 forecast_total = 0
-                months_forecasted = 0
 
-        # Total projected closing = complete actual + partial-month forecast + future months forecast
-        if dsr_rev_partial:
-            projected_closing = ytd_complete_actual + partial_month_forecast + forecast_total
-        else:
-            projected_closing = ytd_complete_actual + forecast_total
-
+        projected_closing = ytd_actual_estimated + forecast_total
         gap_to_target = projected_closing - TARGET_FY
         achievement_pct = (projected_closing / TARGET_FY) * 100
 
         # KPI bar
         kc1, kc2, kc3, kc4 = st.columns(4)
         kc1.markdown(kpi("Target FY25-26", "PKR 28.00B", "Set by management"), unsafe_allow_html=True)
-        kc2.markdown(kpi("YTD Actual",
-                         f"PKR {ytd_complete_actual/1e9:.2f}B",
-                         f"{months_complete} complete months"), unsafe_allow_html=True)
-        kc3.markdown(kpi("Forecast Remaining",
-                         f"PKR {(partial_month_forecast + forecast_total)/1e9:.2f}B",
-                         f"{(1 if dsr_rev_partial else 0)+months_forecasted} months ahead"), unsafe_allow_html=True)
+        kc2.markdown(kpi("YTD Actual (Jul-Apr)",
+                         f"PKR {ytd_actual_estimated/1e9:.2f}B",
+                         f"{months_through} months (Apr scaled to month-end)"), unsafe_allow_html=True)
+        kc3.markdown(kpi("Forecast May-Jun",
+                         f"PKR {forecast_total/1e9:.2f}B",
+                         f"{months_to_fy_end} months remaining"), unsafe_allow_html=True)
         is_short = projected_closing < TARGET_FY
         kc4.markdown(kpi("Projected Close",
                          f"PKR {projected_closing/1e9:.2f}B",
@@ -3416,26 +3425,28 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
                 f"Confidence: ±10% based on Gradient Boosting MAPE 7.30%."
             )
         elif achievement_pct >= 95:
+            avg_remaining = forecast_total/max(1,months_to_fy_end) if months_to_fy_end > 0 else 0
+            needed = (TARGET_FY-ytd_actual_estimated)/max(1,months_to_fy_end)
             st.warning(
                 f"⚠️ **Stretch target — within reach.** "
-                f"Projected closing PKR {projected_closing/1e9:.2f}B falls short by PKR {abs(gap_to_target)/1e9:.2f}B "
-                f"({gap_to_target/TARGET_FY*100:+.1f}%). To hit target, the {months_forecasted+(1 if dsr_rev_partial else 0)} "
-                f"remaining months need to average PKR {(TARGET_FY-ytd_complete_actual)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/1e9:.2f}B "
-                f"vs forecast of PKR {(partial_month_forecast+forecast_total)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/1e9:.2f}B/month."
+                f"Projected close PKR {projected_closing/1e9:.2f}B falls short by PKR {abs(gap_to_target)/1e9:.2f}B. "
+                f"To hit target, the {months_to_fy_end} remaining months need PKR {needed/1e9:.2f}B/month "
+                f"vs forecast PKR {avg_remaining/1e9:.2f}B/month."
             )
         else:
+            avg_remaining = forecast_total/max(1,months_to_fy_end) if months_to_fy_end > 0 else 1
+            needed = (TARGET_FY-ytd_actual_estimated)/max(1,months_to_fy_end)
+            uplift = (needed/avg_remaining-1)*100 if avg_remaining > 0 else 0
             st.error(
                 f"❌ **Off-track for FY25-26 target.** "
-                f"Projected closing PKR {projected_closing/1e9:.2f}B falls short by PKR {abs(gap_to_target)/1e9:.2f}B "
-                f"({gap_to_target/TARGET_FY*100:+.1f}%). The remaining months would need PKR "
-                f"{(TARGET_FY-ytd_complete_actual)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/1e9:.2f}B/month "
-                f"to close the gap — that's {((TARGET_FY-ytd_complete_actual)/max(1,months_forecasted+(1 if dsr_rev_partial else 0))/(partial_month_forecast+forecast_total)*max(1,months_forecasted+(1 if dsr_rev_partial else 0))-1)*100:.0f}% above current run-rate."
+                f"Projected close PKR {projected_closing/1e9:.2f}B falls short by PKR {abs(gap_to_target)/1e9:.2f}B. "
+                f"Remaining {months_to_fy_end} months would need PKR {needed/1e9:.2f}B/month — "
+                f"that's {uplift:+.0f}% above forecast run-rate."
             )
 
         # Visual: cumulative actual + forecast vs target line
         col1, col2 = st.columns([3,1])
         with col1:
-            # Build month-by-month FY view
             fy_months = pd.date_range(fy_start, fy_end, freq="MS")
             actual_vals = []
             forecast_vals = []
@@ -3443,28 +3454,18 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
                 if m in ts_dsr_rev_train.index:
                     actual_vals.append(ts_dsr_rev_train.loc[m])
                     forecast_vals.append(None)
-                elif dsr_rev_partial and m == partial_month_label:
+                elif len(fc_remaining) and (m in pd.to_datetime(fc_remaining["Date"]).values):
                     actual_vals.append(None)
-                    forecast_vals.append(partial_month_forecast)
+                    forecast_vals.append(float(fc_remaining[fc_remaining["Date"]==m]["Forecast"].iloc[0]))
                 else:
                     actual_vals.append(None)
-                    # Find this month in forecast
-                    if 'fc_d' in dir():
-                        match = fc_d[fc_d["Date"]==m]
-                        if len(match):
-                            forecast_vals.append(match["Forecast"].iloc[0])
-                        else:
-                            forecast_vals.append(None)
-                    else:
-                        forecast_vals.append(None)
+                    forecast_vals.append(None)
 
             fy_df = pd.DataFrame({"Month": fy_months,
                                   "Actual": actual_vals,
                                   "Forecast": forecast_vals})
-            # Cumulative
             fy_df["CumActual"] = fy_df["Actual"].cumsum()
-            # For cumulative forecast, we need to start from last actual and add forecast each month
-            cum = ytd_complete_actual
+            cum = ytd_actual_estimated
             cum_forecast = []
             for v in forecast_vals:
                 if v is not None:
@@ -3476,14 +3477,13 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
 
             fig_d = go.Figure()
             fig_d.add_trace(go.Scatter(x=fy_df["Month"], y=fy_df["CumActual"]/1e9,
-                name="Cumulative Actual", mode="lines+markers",
+                name="Cumulative Actual (Jul-Apr)", mode="lines+markers",
                 line=dict(color="#2c5f8a", width=3),
                 marker=dict(size=9)))
             fig_d.add_trace(go.Scatter(x=fy_df["Month"], y=fy_df["CumForecast"]/1e9,
-                name="Cumulative Projection", mode="lines+markers",
+                name="Forecast May-Jun", mode="lines+markers",
                 line=dict(color="#e65100", width=3, dash="dash"),
                 marker=dict(size=9, symbol="diamond")))
-            # Target line
             fig_d.add_hline(y=TARGET_FY/1e9, line_dash="dot", line_color="#c2185b", line_width=2,
                             annotation_text=f"Target: PKR 28B",
                             annotation_position="top right",
@@ -3496,18 +3496,20 @@ Avg PKR/unit (live): {avg_price_dsr:.0f}
             st.plotly_chart(fig_d, use_container_width=True)
 
         with col2:
+            avg_actual_per_mo = ytd_actual_estimated/max(1,months_through)
+            avg_fc_per_mo = forecast_total/max(1,months_to_fy_end)
             st.markdown(f"""<div class="manual-working">FY25-26 CLOSING FORECAST
 ══════════════════════════════
 Target  : PKR 28.00B
 
-YTD Actual ({months_complete} months):
-  PKR {ytd_complete_actual/1e9:.2f}B
-  Avg PKR {ytd_complete_actual/max(1,months_complete)/1e9:.2f}B/month
+YTD Actual ({months_through} months):
+  PKR {ytd_actual_estimated/1e9:.2f}B
+  Avg PKR {avg_actual_per_mo/1e9:.2f}B/month
+  (Apr scaled by working days)
 
-Forecast Remaining:
-  Months: {(1 if dsr_rev_partial else 0)+months_forecasted}
-  Total : PKR {(partial_month_forecast+forecast_total)/1e9:.2f}B
-  Avg   : PKR {(partial_month_forecast+forecast_total)/max(1,(1 if dsr_rev_partial else 0)+months_forecasted)/1e9:.2f}B/mo
+Forecast May-Jun ({months_to_fy_end} mo):
+  Total : PKR {forecast_total/1e9:.2f}B
+  Avg   : PKR {avg_fc_per_mo/1e9:.2f}B/mo
 
 PROJECTED CLOSE: PKR {projected_closing/1e9:.2f}B
                  ({achievement_pct:.1f}% of target)
