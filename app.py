@@ -405,10 +405,11 @@ for _df in (df_sales, df_act):
 if "Yr" in df_travel.columns and "Mo" in df_travel.columns:
     df_travel["FiscalYear"]  = df_travel.apply(lambda r: to_fiscal_year_from_ym(r["Yr"], r["Mo"]), axis=1)
     df_travel["FiscalMonth"] = df_travel["Mo"].apply(to_fiscal_month)
-# ZSDCY: calendar-year source, but we attach FiscalYear so all pages can use Pakistan fiscal year
+# ZSDCY: calendar-year source, but we attach FiscalYear/FiscalMonth so all pages can use Pakistan fiscal year
 if "Yr" in df_zsdcy.columns and "Mo" in df_zsdcy.columns:
     if "FiscalYear" not in df_zsdcy.columns:
         df_zsdcy["FiscalYear"]  = df_zsdcy.apply(lambda r: to_fiscal_year_from_ym(r["Yr"], r["Mo"]), axis=1)
+    if "FiscalMonth" not in df_zsdcy.columns:
         df_zsdcy["FiscalMonth"] = df_zsdcy["Mo"].apply(to_fiscal_month)
 
 fiscal_month_order = [7,8,9,10,11,12,1,2,3,4,5,6]   # calendar months in fiscal order
@@ -1027,36 +1028,90 @@ elif page == "💰 Promotional Analysis":
         apply_layout(fig, height=330)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Interactive Explorer ──
+    # ── Interactive Explorer — Split: Teams + Products (separate, all items) ──
     st.markdown("---")
-    st.markdown(sec("🔍 Promo Spend Explorer — Adjustable"), unsafe_allow_html=True)
-    col_pf1, col_pf2, col_pf3 = st.columns(3)
-    with col_pf1:
-        n_promo = st.slider("Number of items", 5, 50, 10, key="promo_n")
-    with col_pf2:
-        sort_promo = st.selectbox("Sort", ["Top (Highest)", "Bottom (Lowest)"], key="promo_sort")
-    with col_pf3:
-        promo_view = st.selectbox("View by", ["Teams", "Products"], key="promo_view")
+    st.markdown(sec("🔍 Promo Spend Explorer — Adjustable (All Teams + All Products)"), unsafe_allow_html=True)
 
-    asc_promo = (sort_promo == "Bottom (Lowest)")
-    if promo_view == "Teams":
-        pdata = df_af.groupby("RequestorTeams")["TotalAmount"].sum().reset_index()
-        pdata.columns = ["Name", "TotalAmount"]
+    # FY filter for Explorer (lets supervisor compare any FY against another)
+    explorer_fy_options = ["All Selected FYs"] + sorted(df_af["FiscalYear"].dropna().unique().tolist()) if "FiscalYear" in df_af.columns else ["All"]
+    promo_fy_pick = st.selectbox("Fiscal Year filter (Explorer scope)", explorer_fy_options, key="promo_explorer_fy")
+
+    if promo_fy_pick == "All Selected FYs":
+        df_explorer = df_af.copy()
     else:
-        pdata = df_af.groupby("Product")["TotalAmount"].sum().reset_index()
-        pdata.columns = ["Name", "TotalAmount"]
+        df_explorer = df_af[df_af["FiscalYear"] == promo_fy_pick].copy()
 
-    # Filter out zeros for bottom view (avoids showing empty bars)
-    pdata = pdata[pdata["TotalAmount"] > 0].sort_values("TotalAmount", ascending=asc_promo).head(n_promo)
-    pdata["Label"] = pdata["TotalAmount"].apply(fmt)
-    cs_p = "Reds_r" if asc_promo else "Blues"
-    fig = px.bar(pdata, x="TotalAmount", y="Name", orientation="h", text="Label",
-                 color="TotalAmount", color_continuous_scale=cs_p,
-                 title=f"{'Bottom' if asc_promo else 'Top'} {n_promo} {promo_view} — Promo Spend")
-    fig.update_traces(textposition="outside", textfont_size=10)
-    apply_layout(fig, height=max(350, n_promo*28), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                 xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
-    st.plotly_chart(fig, use_container_width=True)
+    # ─── Two side-by-side panels: Teams (left) and Products (right) ───
+    col_pe1, col_pe2 = st.columns(2)
+
+    # === LEFT: Teams ===
+    with col_pe1:
+        st.markdown("**🏢 Teams Explorer**")
+        team_data_full = df_explorer.groupby("RequestorTeams")["TotalAmount"].sum().reset_index()
+        team_data_full = team_data_full[team_data_full["TotalAmount"] > 0]
+        total_teams = len(team_data_full)
+
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            if total_teams >= 5:
+                n_teams = st.slider(f"# Teams (Total: {total_teams})", 5, total_teams,
+                                    min(15, total_teams), key="promo_n_teams")
+            else:
+                n_teams = max(1, total_teams)
+                st.caption(f"Total teams: {total_teams}")
+        with col_t2:
+            sort_teams = st.selectbox("Sort", ["Top (Highest)", "Bottom (Lowest)"],
+                                       key="promo_sort_teams")
+
+        asc_teams = (sort_teams == "Bottom (Lowest)")
+        team_show = team_data_full.sort_values("TotalAmount", ascending=asc_teams).head(n_teams).copy()
+        team_show["Label"] = team_show["TotalAmount"].apply(fmt)
+        cs_t = "Reds_r" if asc_teams else "Blues"
+        title_t = f"{'Bottom' if asc_teams else 'Top'} {n_teams} Teams — {promo_fy_pick}"
+        fig_t = px.bar(team_show, x="TotalAmount", y="RequestorTeams", orientation="h",
+                       text="Label", color="TotalAmount", color_continuous_scale=cs_t,
+                       title=title_t)
+        fig_t.update_traces(textposition="outside", textfont_size=10)
+        apply_layout(fig_t, height=max(400, n_teams * 26),
+                     yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                     xaxis=dict(gridcolor="#eeeeee", title="Promo Spend (PKR)"),
+                     coloraxis_showscale=False)
+        st.plotly_chart(fig_t, use_container_width=True)
+
+    # === RIGHT: Products ===
+    with col_pe2:
+        st.markdown("**💊 Products Explorer**")
+        prod_data_full = df_explorer.groupby("Product")["TotalAmount"].sum().reset_index()
+        prod_data_full = prod_data_full[prod_data_full["TotalAmount"] > 0]
+        total_prods_p = len(prod_data_full)
+
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            if total_prods_p >= 5:
+                n_prods_p = st.slider(f"# Products (Total: {total_prods_p})", 5, total_prods_p,
+                                       min(15, total_prods_p), key="promo_n_prods")
+            else:
+                n_prods_p = max(1, total_prods_p)
+                st.caption(f"Total products: {total_prods_p}")
+        with col_p2:
+            sort_prods = st.selectbox("Sort", ["Top (Highest)", "Bottom (Lowest)"],
+                                       key="promo_sort_prods")
+
+        asc_prods = (sort_prods == "Bottom (Lowest)")
+        prod_show = prod_data_full.sort_values("TotalAmount", ascending=asc_prods).head(n_prods_p).copy()
+        prod_show["Label"] = prod_show["TotalAmount"].apply(fmt)
+        cs_p = "Reds_r" if asc_prods else "Greens"
+        title_p = f"{'Bottom' if asc_prods else 'Top'} {n_prods_p} Products — {promo_fy_pick}"
+        fig_p = px.bar(prod_show, x="TotalAmount", y="Product", orientation="h",
+                       text="Label", color="TotalAmount", color_continuous_scale=cs_p,
+                       title=title_p)
+        fig_p.update_traces(textposition="outside", textfont_size=10)
+        apply_layout(fig_p, height=max(400, n_prods_p * 26),
+                     yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                     xaxis=dict(gridcolor="#eeeeee", title="Promo Spend (PKR)"),
+                     coloraxis_showscale=False)
+        st.plotly_chart(fig_p, use_container_width=True)
+
     st.markdown("---")
 
     # ── Row B: Top/Bottom Teams by Spend ──
@@ -1373,34 +1428,93 @@ elif page == "✈️ Travel Analysis":
                      xaxis=dict(gridcolor="#eeeeee", title="Total Bookings"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Travel Explorer ──
+    # ── Travel Explorer — split into CITIES + TEAMS, each with FY filter ──
+    # Note: Explorer bypasses sidebar FY filter so you can compare any FY.
     st.markdown("---")
-    st.markdown(sec("🔍 Travel Explorer — Adjustable"), unsafe_allow_html=True)
-    col_tf1, col_tf2, col_tf3 = st.columns(3)
-    with col_tf1:
-        n_travel = st.slider("Number of items", 5, 50, 15, key="travel_n")
-    with col_tf2:
-        sort_travel = st.selectbox("Sort", ["Top (Most Trips)", "Bottom (Least Trips)"], key="travel_sort")
-    with col_tf3:
-        travel_view = st.selectbox("View by", ["Cities", "Teams"], key="travel_view")
+    st.markdown(sec("🔍 Travel Explorer — Adjustable (All Cities + All Teams)"), unsafe_allow_html=True)
 
-    asc_travel = (sort_travel == "Bottom (Least Trips)")
-    if travel_view == "Cities":
-        tdata = df_t.groupby("VisitLocation")["TravelCount"].sum().reset_index()
-        tdata.columns = ["Name", "Trips"]
-    else:
-        tdata = df_t.groupby("TravellerTeam")["TravelCount"].sum().reset_index()
-        tdata.columns = ["Name", "Trips"]
-    tdata = tdata[tdata["Trips"] > 0].sort_values("Trips", ascending=asc_travel).head(n_travel)
-    tdata["Label"] = tdata["Trips"].apply(fmt_num)
-    cs_t = "Reds_r" if asc_travel else "Blues"
-    fig = px.bar(tdata, x="Trips", y="Name", orientation="h", text="Label",
-                 color="Trips", color_continuous_scale=cs_t,
-                 title=f"{'Bottom' if asc_travel else 'Top'} {n_travel} {travel_view} by Trips")
-    fig.update_traces(textposition="outside", textfont_size=10)
-    apply_layout(fig, height=max(350, n_travel*28), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                 xaxis=dict(gridcolor="#eeeeee", title="Total Trips"), coloraxis_showscale=False)
-    st.plotly_chart(fig, use_container_width=True)
+    # FY options for filter (from full df_travel)
+    p3_fys_avail = sorted(df_travel["FiscalYear"].dropna().unique()) if "FiscalYear" in df_travel.columns else []
+    p3_fy_options = ["All Fiscal Years"] + p3_fys_avail
+
+    cities_col, teams_col = st.columns(2)
+
+    # ─── PANEL A: CITIES ───
+    with cities_col:
+        st.markdown("**🏙️ Cities Explorer**")
+        ccf1, ccf2, ccf3 = st.columns(3)
+        with ccf2:
+            travel_c_sort = st.selectbox("Sort", ["Top (Most Trips)", "Bottom (Least Trips)"], key="travel_c_sort")
+        with ccf3:
+            travel_c_fy = st.selectbox("Fiscal Year", p3_fy_options, key="travel_c_fy")
+
+        df_p3_c = df_travel.copy()
+        if travel_c_fy != "All Fiscal Years" and "FiscalYear" in df_travel.columns:
+            df_p3_c = df_p3_c[df_p3_c["FiscalYear"] == travel_c_fy]
+
+        city_agg = df_p3_c.groupby("VisitLocation")["TravelCount"].sum().reset_index()
+        city_agg = city_agg[city_agg["TravelCount"] > 0]
+        total_cities_p3 = len(city_agg)
+
+        with ccf1:
+            if total_cities_p3 >= 5:
+                n_c = st.slider(f"# Cities (Total: {total_cities_p3})", 5, total_cities_p3,
+                                min(15, total_cities_p3), key="travel_c_n")
+            else:
+                n_c = total_cities_p3
+                st.caption(f"Total cities: {total_cities_p3}")
+
+        asc_c = (travel_c_sort == "Bottom (Least Trips)")
+        city_agg = city_agg.sort_values("TravelCount", ascending=asc_c).head(n_c).copy()
+        city_agg.columns = ["Name", "Trips"]
+        city_agg["Label"] = city_agg["Trips"].apply(fmt_num)
+        cs_c = "Reds_r" if asc_c else "Blues"
+        fig_c = px.bar(city_agg, x="Trips", y="Name", orientation="h", text="Label",
+                       color="Trips", color_continuous_scale=cs_c,
+                       title=f"{'Bottom' if asc_c else 'Top'} {n_c} Cities — {travel_c_fy}")
+        fig_c.update_traces(textposition="outside", textfont_size=10)
+        apply_layout(fig_c, height=max(380, n_c*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                     xaxis=dict(gridcolor="#eeeeee", title="Trips"), coloraxis_showscale=False)
+        st.plotly_chart(fig_c, use_container_width=True)
+
+    # ─── PANEL B: TEAMS ───
+    with teams_col:
+        st.markdown("**👥 Teams Explorer**")
+        tcf1, tcf2, tcf3 = st.columns(3)
+        with tcf2:
+            travel_t_sort = st.selectbox("Sort", ["Top (Most Trips)", "Bottom (Least Trips)"], key="travel_t_sort")
+        with tcf3:
+            travel_t_fy = st.selectbox("Fiscal Year", p3_fy_options, key="travel_t_fy")
+
+        df_p3_t = df_travel.copy()
+        if travel_t_fy != "All Fiscal Years" and "FiscalYear" in df_travel.columns:
+            df_p3_t = df_p3_t[df_p3_t["FiscalYear"] == travel_t_fy]
+
+        team_agg_p3 = df_p3_t.groupby("TravellerTeam")["TravelCount"].sum().reset_index()
+        team_agg_p3 = team_agg_p3[team_agg_p3["TravelCount"] > 0]
+        total_teams_p3 = len(team_agg_p3)
+
+        with tcf1:
+            if total_teams_p3 >= 5:
+                n_pt = st.slider(f"# Teams (Total: {total_teams_p3})", 5, total_teams_p3,
+                                  min(15, total_teams_p3), key="travel_t_n")
+            else:
+                n_pt = total_teams_p3
+                st.caption(f"Total teams: {total_teams_p3}")
+
+        asc_pt = (travel_t_sort == "Bottom (Least Trips)")
+        team_agg_p3 = team_agg_p3.sort_values("TravelCount", ascending=asc_pt).head(n_pt).copy()
+        team_agg_p3.columns = ["Name", "Trips"]
+        team_agg_p3["Label"] = team_agg_p3["Trips"].apply(fmt_num)
+        cs_pt = "Reds_r" if asc_pt else "Greens"
+        fig_pt = px.bar(team_agg_p3, x="Trips", y="Name", orientation="h", text="Label",
+                        color="Trips", color_continuous_scale=cs_pt,
+                        title=f"{'Bottom' if asc_pt else 'Top'} {n_pt} Teams — {travel_t_fy}")
+        fig_pt.update_traces(textposition="outside", textfont_size=10)
+        apply_layout(fig_pt, height=max(380, n_pt*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                     xaxis=dict(gridcolor="#eeeeee", title="Trips"), coloraxis_showscale=False)
+        st.plotly_chart(fig_pt, use_container_width=True)
+    st.markdown("---")
 
     # ── Row D: Team-level Top/Bottom Travel ──
     st.markdown(sec("Team-Level Travel Activity"), unsafe_allow_html=True)
@@ -1698,8 +1812,52 @@ elif page == "📦 Distribution Analysis":
                          xaxis=dict(gridcolor="#eeeeee", title=f"Growth % ({grow_old_fy}→{grow_new_fy})"))
             st.plotly_chart(fig, use_container_width=True)
         else:
-            # Fall back to legacy zsdcy_growth.csv if needed
-            st.info("FY-based growth requires Material Name + FiscalYear columns in ZSDCY data.")
+            # ZSDCY slim CSV doesn't have product-level granularity. Use the legacy
+            # zsdcy_growth.csv which is calendar-year (2024 vs 2025), but display the
+            # data with clear caveats about the FY caveat.
+            _zg = df_zgrow.copy()
+            if "Rev2024" not in _zg.columns and "Y2024" in _zg.columns:
+                _zg["Rev2024"] = pd.to_numeric(_zg["Y2024"], errors="coerce").fillna(0)
+                _zg["Rev2025"] = pd.to_numeric(_zg["Y2025"], errors="coerce").fillna(0)
+            if "Material Name" not in _zg.columns:
+                _zg["Material Name"] = _zg["Product"] if "Product" in _zg.columns else _zg.iloc[:,0]
+            _zg["Rev2024"] = pd.to_numeric(_zg["Rev2024"], errors="coerce").fillna(0)
+            _zg["Rev2025"] = pd.to_numeric(_zg["Rev2025"], errors="coerce").fillna(0)
+            # Mature filter: ≥10M baseline + active in both years (Rev2024 > 0 AND Rev2025 > 0)
+            mature_zg = _zg[(_zg["Rev2024"] >= 10_000_000) & (_zg["Rev2025"] > 0)].copy()
+            mature_zg["GrowthPct"] = (mature_zg["Rev2025"]/mature_zg["Rev2024"] - 1) * 100
+
+            def gf_label_z2(g_pct):
+                if pd.isna(g_pct): return "—"
+                if g_pct >= 100:
+                    return f"{(g_pct/100)+1:.1f}x"
+                else:
+                    return f"{g_pct:+.0f}%"
+
+            grow_top_zl = mature_zg.nlargest(20, "GrowthPct").reset_index(drop=True)
+            grow_top_zl["Label"] = grow_top_zl["GrowthPct"].apply(gf_label_z2)
+            grow_top_zl["ShortName"] = grow_top_zl["Material Name"].astype(str).str[:35]
+
+            if len(grow_top_zl) >= 2:
+                g1 = grow_top_zl.iloc[0]
+                g2 = grow_top_zl.iloc[1]
+                st.markdown(note(
+                    f"<b>{g1['Material Name']}</b> {gf_label_z2(g1['GrowthPct'])} | "
+                    f"<b>{g2['Material Name']}</b> {gf_label_z2(g2['GrowthPct'])}. "
+                    "ℹ️ Note: This section uses calendar-year (2024 vs 2025) because the slim "
+                    "ZSDCY CSV doesn't have product-level FY data. Other Page 4 sections use FY framing. "
+                    "Filters: ≥PKR 10M baseline, active in both years."
+                ), unsafe_allow_html=True)
+            else:
+                st.info("Insufficient ZSDCY product data for growth analysis.")
+
+            if len(grow_top_zl) > 0:
+                colors_zl = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" for g in grow_top_zl["GrowthPct"]]
+                fig = go.Figure(go.Bar(x=grow_top_zl["GrowthPct"], y=grow_top_zl["ShortName"], orientation="h",
+                    text=grow_top_zl["Label"], textposition="outside", textfont_size=9, marker_color=colors_zl))
+                apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                             xaxis=dict(gridcolor="#eeeeee", title="Growth % (2024 → 2025)"))
+                st.plotly_chart(fig, use_container_width=True)
 
     # ── City-Level Revenue Distribution ──
     st.markdown(sec("🗺️ City-Level Revenue Distribution"), unsafe_allow_html=True)
