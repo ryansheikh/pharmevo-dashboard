@@ -733,11 +733,11 @@ if page == "📈 Sales Analysis":
     st.plotly_chart(fig_s, use_container_width=True)
     st.markdown("---")
 
-    # ─── Fastest Growing Products — MATURE products only (with launch-age filter) ───
-    st.markdown(sec(f"🚀 Fastest Growing Products — Mature Products Only"), unsafe_allow_html=True)
+    # ─── Fastest Growing Products — MATURE products only, ALL products with slider+sort ───
+    st.markdown(sec(f"🚀 Product Growth Explorer — Mature Products Only"), unsafe_allow_html=True)
 
     # FY pair selector — let user pick which 2 FYs to compare
-    col_g1, col_g2, col_g3 = st.columns([1,1,1])
+    col_g1, col_g2, col_g3, col_g4 = st.columns([1,1,1,1])
     with col_g1:
         # Default to last 2 complete FYs if available, else last 2
         if len(_complete_fys) >= 2:
@@ -757,6 +757,8 @@ if page == "📈 Sales Analysis":
             grow_fy_new = None
     with col_g3:
         grow_metric = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="p1_grow_metric")
+    with col_g4:
+        grow_sort = st.selectbox("Sort", ["Top (Fastest Growing)", "Bottom (Slowest / Declining)"], key="p1_grow_sort")
 
     grow_col = "TotalUnits" if grow_metric == "Units" else "TotalRevenue"
 
@@ -777,16 +779,12 @@ if page == "📈 Sales Analysis":
         gdf = pd.DataFrame({"old": r_old, "new": r_new}).fillna(0)
 
         # Join with launch dates — exclude products with <24 months since launch
-        # (so a product launched in Q4 of FY24-25 doesn't show 5000% growth in FY25-26)
         gdf = gdf.merge(product_launch[["ProductName","LaunchAgeMonths","ActiveMonths"]],
                          left_index=True, right_on="ProductName", how="left")
         gdf["LaunchAgeMonths"] = gdf["LaunchAgeMonths"].fillna(99)
         gdf["ActiveMonths"]    = gdf["ActiveMonths"].fillna(0)
 
         # Mature-product filter:
-        #   1. Baseline ≥ PKR 50M (or 500K units) — ignore tiny products
-        #   2. ≥24 months since first appearance (skip recent launches)
-        #   3. Active in BOTH FYs (ActiveMonths >= 12)
         baseline_threshold = 500_000 if grow_metric == "Units" else 50_000_000
         mature = gdf[
             (gdf["old"] >= baseline_threshold) &
@@ -808,38 +806,50 @@ if page == "📈 Sales Analysis":
                 return f"{g_pct:+.0f}%"
         mature["Label"] = mature["GrowthPct"].apply(gf_label)
 
-        col_a, col_b = st.columns(2)
+        # Slider for number of products to display
+        total_mature = len(mature)
+        if total_mature == 0:
+            st.warning(f"No products meet the mature-product filter for {grow_fy_old}→{grow_fy_new}. "
+                        f"Try a different FY pair or check the metric.")
+        else:
+            asc_grow = (grow_sort == "Bottom (Slowest / Declining)")
+            mature_sorted = mature.sort_values("GrowthPct", ascending=asc_grow).reset_index(drop=True)
 
-        with col_a:
-            st.markdown("**Top 15 — Highest growth (mature products)**")
-            top_grow = mature.nlargest(15, "GrowthPct").reset_index(drop=True)
-            if len(top_grow) >= 2:
-                g1n, g1g = top_grow.iloc[0]["ProductName"], top_grow.iloc[0]["GrowthPct"]
-                g2n, g2g = top_grow.iloc[1]["ProductName"], top_grow.iloc[1]["GrowthPct"]
-                st.markdown(note(
-                    f"<b>{g1n}</b> {gf_label(g1g)} | <b>{g2n}</b> {gf_label(g2g)}. "
-                    f"Filters applied: Baseline ≥ {baseline_threshold/1e6:.0f}M, "
-                    f"≥24 months since launch, active in both FYs. "
-                    f"{'Partial FYs annualized for fair comparison.' if old_mo<12 or new_mo<12 else ''}"
-                ), unsafe_allow_html=True)
-            colors_g = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" for g in top_grow["GrowthPct"]]
-            fig = go.Figure(go.Bar(x=top_grow["GrowthPct"], y=top_grow["ProductName"],
-                                    orientation="h", text=top_grow["Label"],
-                                    textposition="outside", textfont_size=11, marker_color=colors_g))
-            apply_layout(fig, height=540, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                         xaxis=dict(gridcolor="#eeeeee", title=f"{grow_metric} Growth %"))
-            st.plotly_chart(fig, use_container_width=True)
+            n_grow = st.slider(f"Number of products to show (Total mature: {total_mature})",
+                               5, total_mature, min(15, total_mature), key="p1_grow_n")
+            display_grow = mature_sorted.head(n_grow).copy()
 
-        with col_b:
-            st.markdown("**Detail Table — All Mature Products with Growth**")
-            disp = mature.sort_values("GrowthPct", ascending=False).copy()
-            disp["LaunchAge"] = disp["LaunchAgeMonths"].apply(lambda x: f"{int(x)} mo")
-            disp["Old"] = disp["old"].apply(fmt_explorer)
-            disp["New"] = disp["new"].apply(fmt_explorer)
-            disp["Growth"] = disp["Label"]
-            disp = disp[["ProductName","LaunchAge","ActiveMonths","Old","New","Growth"]]
-            disp.columns = ["Product","Months Since Launch","Months Active","Old FY","New FY","Growth"]
-            st.dataframe(disp, use_container_width=True, hide_index=True, height=540)
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                st.markdown(f"**{'Bottom' if asc_grow else 'Top'} {n_grow} — by {grow_metric} growth ({grow_fy_old}→{grow_fy_new})**")
+                if len(display_grow) >= 2:
+                    g1n, g1g = display_grow.iloc[0]["ProductName"], display_grow.iloc[0]["GrowthPct"]
+                    g2n, g2g = display_grow.iloc[1]["ProductName"], display_grow.iloc[1]["GrowthPct"]
+                    st.markdown(note(
+                        f"<b>{g1n}</b> {gf_label(g1g)} | <b>{g2n}</b> {gf_label(g2g)}. "
+                        f"Filters: Baseline ≥ {baseline_threshold/1e6:.0f}M, "
+                        f"≥24 months since launch, active in both FYs. "
+                        f"{'Partial FYs annualized for fair comparison.' if old_mo<12 or new_mo<12 else ''}"
+                    ), unsafe_allow_html=True)
+                colors_g = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" if g >= 0 else "#c62828" for g in display_grow["GrowthPct"]]
+                fig = go.Figure(go.Bar(x=display_grow["GrowthPct"], y=display_grow["ProductName"],
+                                        orientation="h", text=display_grow["Label"],
+                                        textposition="outside", textfont_size=10, marker_color=colors_g))
+                apply_layout(fig, height=max(450, n_grow*30), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                             xaxis=dict(gridcolor="#eeeeee", title=f"{grow_metric} Growth %"))
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_b:
+                st.markdown(f"**Detail Table — All {total_mature} Mature Products**")
+                disp = mature.sort_values("GrowthPct", ascending=asc_grow).copy()
+                disp["LaunchAge"] = disp["LaunchAgeMonths"].apply(lambda x: f"{int(x)} mo")
+                disp["Old"] = disp["old"].apply(fmt_explorer)
+                disp["New"] = disp["new"].apply(fmt_explorer)
+                disp["Growth"] = disp["Label"]
+                disp = disp[["ProductName","LaunchAge","ActiveMonths","Old","New","Growth"]]
+                disp.columns = ["Product","Months Since Launch","Months Active","Old FY","New FY","Growth"]
+                st.dataframe(disp, use_container_width=True, hide_index=True, height=max(450, n_grow*30))
 
     else:
         st.info("Need 2 different fiscal years to compute growth.")
@@ -1716,148 +1726,268 @@ elif page == "📦 Distribution Analysis":
     else:
         st.warning("FiscalYear column missing from ZSDCY data.")
 
-    # ── Top 20 Products + Fastest Growing — FISCAL YEAR FRAMING ──
+    # ── Top Products + Fastest Growing — FULL EXPLORERS (all products, FY filter, sort) ──
     col1, col2 = st.columns(2)
+
+    # ─── PANEL 1: TOP/BOTTOM PRODUCTS EXPLORER ───
     with col1:
-        st.markdown(sec("🏆 Top 20 Products by Revenue (SKU Level) — All FYs"), unsafe_allow_html=True)
-        top_metric = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="p4_top20_metric")
+        st.markdown(sec("🏆 Product Revenue Explorer (SKU Level)"), unsafe_allow_html=True)
+        tcf1, tcf2 = st.columns(2)
+        with tcf1:
+            top_metric = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="p4_top_metric")
+        with tcf2:
+            top_sort = st.selectbox("Sort", ["Top (Highest)", "Bottom (Lowest)"], key="p4_top_sort")
+
         is_units_top = (top_metric == "Units")
-        top_col = "Qty" if is_units_top else "Revenue"
-        top_fmt = (lambda v: fmt_num(v) if is_units_top else fmt(v))
+        top_col_p4 = "Qty" if is_units_top else "Revenue"
+        top_fmt_p4 = (lambda v: fmt_num(v) if is_units_top else fmt(v))
 
-        # Use Material Name from df_zsdcy if present
-        if "Material Name" in df_zsdcy.columns:
-            top20_z = df_zsdcy.groupby("Material Name").agg(
-                Revenue=("Revenue","sum"),Qty=("Qty","sum")).reset_index().nlargest(20, top_col)
-            top20_z["ShortName"] = top20_z["Material Name"].astype(str).str[:35]
-        elif "Product" in df_zsdcy.columns:
-            top20_z = df_zsdcy.groupby("Product").agg(
-                Revenue=("Revenue","sum"),Qty=("Qty","sum")).reset_index().nlargest(20, top_col)
-            top20_z["ShortName"] = top20_z["Product"].astype(str).str[:35]
-        elif len(df_zprod) > 0:
-            prod_col = "Product" if "Product" in df_zprod.columns else df_zprod.columns[0]
-            top20_z = df_zprod.nlargest(20, "Revenue").copy()
-            top20_z["ShortName"] = top20_z[prod_col].astype(str).str[:35]
-            if "Qty" not in top20_z.columns:
-                top20_z["Qty"] = 0
-        else:
-            top20_z = pd.DataFrame({"ShortName":[], "Revenue":[], "Qty":[]})
+        # FY filter — only works if df_zsdcy has Material Name (per-FY breakdown)
+        has_material_in_z = "Material Name" in df_zsdcy.columns
+        if has_material_in_z:
+            tcf3, tcf4 = st.columns(2)
+            with tcf3:
+                top_fy = st.selectbox("Fiscal Year", ["All Fiscal Years"] + z_fys, key="p4_top_fy")
 
-        if len(top20_z) > 0:
-            top20_z["Label"] = top20_z[top_col].apply(top_fmt)
-            fig = px.bar(top20_z, x=top_col, y="ShortName", orientation="h", text="Label",
-                         color=top_col, color_continuous_scale="Blues")
-            fig.update_traces(textposition="outside", textfont_size=9)
-            apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                         xaxis=dict(gridcolor="#eeeeee", title=top_metric), coloraxis_showscale=False)
-            st.plotly_chart(fig, use_container_width=True)
+            df_z_top = df_zsdcy.copy()
+            if top_fy != "All Fiscal Years":
+                df_z_top = df_z_top[df_z_top["FiscalYear"] == top_fy]
 
-    with col2:
-        st.markdown(sec(f"🚀 Fastest Growing Products (Mature Only — FY-on-FY)"), unsafe_allow_html=True)
+            top_agg = df_z_top.groupby("Material Name").agg(
+                Revenue=("Revenue","sum"), Qty=("Qty","sum")).reset_index()
+            top_agg = top_agg[top_agg[top_col_p4] > 0]
+            total_skus = len(top_agg)
 
-        # Same mature filter as Page 1: ≥10M baseline, ≥12 months active
-        # Use ZSDCY data directly with FY framing (not the legacy zsdcy_growth.csv which is calendar 2024/2025)
-        if "FiscalYear" in df_zsdcy.columns and "Material Name" in df_zsdcy.columns and len(z_fys) >= 2:
-            grow_old_fy = z_fys[-2]   # FY24-25 (complete)
-            grow_new_fy = z_fys[-1]   # FY25-26 (partial OK)
-
-            old_mo_z = int(z_fy_months.get(grow_old_fy, 12))
-            new_mo_z = int(z_fy_months.get(grow_new_fy, 12))
-
-            r_old_z = df_zsdcy[df_zsdcy["FiscalYear"]==grow_old_fy].groupby("Material Name")["Revenue"].sum()
-            r_new_z = df_zsdcy[df_zsdcy["FiscalYear"]==grow_new_fy].groupby("Material Name")["Revenue"].sum()
-
-            # Annualize partial FYs for fair comparison
-            if old_mo_z < 12:
-                r_old_z = r_old_z * (12 / old_mo_z)
-            if new_mo_z < 12:
-                r_new_z = r_new_z * (12 / new_mo_z)
-
-            gz = pd.DataFrame({"old": r_old_z, "new": r_new_z}).fillna(0)
-            # Active in both FYs
-            active_in_both = df_zsdcy.groupby(["Material Name","FiscalYear"])["Revenue"].sum().reset_index()
-            active_count = active_in_both.groupby("Material Name")["FiscalYear"].nunique()
-
-            # Filter: ≥10M baseline (old FY annualized), active in ≥2 FYs
-            gz = gz[(gz["old"] >= 10_000_000) & (gz.index.isin(active_count[active_count>=2].index))].copy()
-            gz["GrowthPct"] = (gz["new"]/gz["old"] - 1) * 100
-
-            def gf_label_z(g_pct):
-                if pd.isna(g_pct): return "—"
-                if g_pct >= 100:
-                    return f"{(g_pct/100)+1:.1f}x"
+            with tcf4:
+                if total_skus >= 5:
+                    n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
+                                      min(20, total_skus), key="p4_top_n")
                 else:
-                    return f"{g_pct:+.0f}%"
+                    n_top = total_skus
+                    st.caption(f"Total SKUs: {total_skus}")
 
-            grow_top_z = gz.nlargest(20, "GrowthPct").reset_index()
-            grow_top_z["Label"] = grow_top_z["GrowthPct"].apply(gf_label_z)
-            grow_top_z["ShortName"] = grow_top_z["Material Name"].astype(str).str[:35]
+            asc_top = (top_sort == "Bottom (Lowest)")
+            top_agg = top_agg.sort_values(top_col_p4, ascending=asc_top).head(n_top).copy()
+            top_agg["ShortName"] = top_agg["Material Name"].astype(str).str[:35]
+            top_agg["Label"] = top_agg[top_col_p4].apply(top_fmt_p4)
+            cs_top = "Reds_r" if asc_top else "Blues"
 
-            if len(grow_top_z) >= 2:
-                g1 = grow_top_z.iloc[0]
-                g2 = grow_top_z.iloc[1]
-                st.markdown(note(
-                    f"<b>{g1['Material Name']}</b> {gf_label_z(g1['GrowthPct'])} | "
-                    f"<b>{g2['Material Name']}</b> {gf_label_z(g2['GrowthPct'])}. "
-                    f"{grow_old_fy} → {grow_new_fy} (annualized). "
-                    f"Filters: ≥PKR 10M baseline, active in both FYs. Same logic as Page 1."
-                ), unsafe_allow_html=True)
-            else:
-                st.markdown(note(f"Top growers {grow_old_fy} → {grow_new_fy}."), unsafe_allow_html=True)
-
-            colors_z = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" for g in grow_top_z["GrowthPct"]]
-            fig = go.Figure(go.Bar(x=grow_top_z["GrowthPct"], y=grow_top_z["ShortName"], orientation="h",
-                text=grow_top_z["Label"], textposition="outside", textfont_size=9, marker_color=colors_z))
-            apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                         xaxis=dict(gridcolor="#eeeeee", title=f"Growth % ({grow_old_fy}→{grow_new_fy})"))
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            # ZSDCY slim CSV doesn't have product-level granularity. Use the legacy
-            # zsdcy_growth.csv which is calendar-year (2024 vs 2025), but display the
-            # data with clear caveats about the FY caveat.
-            _zg = df_zgrow.copy()
-            if "Rev2024" not in _zg.columns and "Y2024" in _zg.columns:
-                _zg["Rev2024"] = pd.to_numeric(_zg["Y2024"], errors="coerce").fillna(0)
-                _zg["Rev2025"] = pd.to_numeric(_zg["Y2025"], errors="coerce").fillna(0)
-            if "Material Name" not in _zg.columns:
-                _zg["Material Name"] = _zg["Product"] if "Product" in _zg.columns else _zg.iloc[:,0]
-            _zg["Rev2024"] = pd.to_numeric(_zg["Rev2024"], errors="coerce").fillna(0)
-            _zg["Rev2025"] = pd.to_numeric(_zg["Rev2025"], errors="coerce").fillna(0)
-            # Mature filter: ≥10M baseline + active in both years (Rev2024 > 0 AND Rev2025 > 0)
-            mature_zg = _zg[(_zg["Rev2024"] >= 10_000_000) & (_zg["Rev2025"] > 0)].copy()
-            mature_zg["GrowthPct"] = (mature_zg["Rev2025"]/mature_zg["Rev2024"] - 1) * 100
-
-            def gf_label_z2(g_pct):
-                if pd.isna(g_pct): return "—"
-                if g_pct >= 100:
-                    return f"{(g_pct/100)+1:.1f}x"
-                else:
-                    return f"{g_pct:+.0f}%"
-
-            grow_top_zl = mature_zg.nlargest(20, "GrowthPct").reset_index(drop=True)
-            grow_top_zl["Label"] = grow_top_zl["GrowthPct"].apply(gf_label_z2)
-            grow_top_zl["ShortName"] = grow_top_zl["Material Name"].astype(str).str[:35]
-
-            if len(grow_top_zl) >= 2:
-                g1 = grow_top_zl.iloc[0]
-                g2 = grow_top_zl.iloc[1]
-                st.markdown(note(
-                    f"<b>{g1['Material Name']}</b> {gf_label_z2(g1['GrowthPct'])} | "
-                    f"<b>{g2['Material Name']}</b> {gf_label_z2(g2['GrowthPct'])}. "
-                    "ℹ️ Note: This section uses calendar-year (2024 vs 2025) because the slim "
-                    "ZSDCY CSV doesn't have product-level FY data. Other Page 4 sections use FY framing. "
-                    "Filters: ≥PKR 10M baseline, active in both years."
-                ), unsafe_allow_html=True)
-            else:
-                st.info("Insufficient ZSDCY product data for growth analysis.")
-
-            if len(grow_top_zl) > 0:
-                colors_zl = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" for g in grow_top_zl["GrowthPct"]]
-                fig = go.Figure(go.Bar(x=grow_top_zl["GrowthPct"], y=grow_top_zl["ShortName"], orientation="h",
-                    text=grow_top_zl["Label"], textposition="outside", textfont_size=9, marker_color=colors_zl))
-                apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                             xaxis=dict(gridcolor="#eeeeee", title="Growth % (2024 → 2025)"))
+            if len(top_agg) > 0:
+                fig = px.bar(top_agg, x=top_col_p4, y="ShortName", orientation="h", text="Label",
+                             color=top_col_p4, color_continuous_scale=cs_top,
+                             title=f"{'Bottom' if asc_top else 'Top'} {n_top} SKUs — {top_fy} ({top_metric})")
+                fig.update_traces(textposition="outside", textfont_size=9)
+                apply_layout(fig, height=max(450, n_top*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                             xaxis=dict(gridcolor="#eeeeee", title=top_metric), coloraxis_showscale=False)
                 st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Slim ZSDCY → use df_zprod (all-time aggregates only — no FY filter possible)
+            if len(df_zprod) > 0:
+                prod_col = "Product" if "Product" in df_zprod.columns else df_zprod.columns[0]
+                top_agg = df_zprod.copy()
+                top_agg = top_agg[top_agg[top_col_p4 if top_col_p4 in top_agg.columns else "Revenue"] > 0]
+                if top_col_p4 not in top_agg.columns:
+                    top_agg[top_col_p4] = 0
+                total_skus = len(top_agg)
+
+                tcf3 = st.columns(1)[0]
+                with tcf3:
+                    if total_skus >= 5:
+                        n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
+                                          min(20, total_skus), key="p4_top_n_slim")
+                    else:
+                        n_top = total_skus
+
+                asc_top = (top_sort == "Bottom (Lowest)")
+                top_agg = top_agg.sort_values(top_col_p4, ascending=asc_top).head(n_top).copy()
+                top_agg["ShortName"] = top_agg[prod_col].astype(str).str[:35]
+                top_agg["Label"] = top_agg[top_col_p4].apply(top_fmt_p4)
+                cs_top = "Reds_r" if asc_top else "Blues"
+
+                st.caption("ℹ️ Slim ZSDCY data — showing all-time SKU totals (FY filter unavailable without product-level fiscal breakdown).")
+
+                fig = px.bar(top_agg, x=top_col_p4, y="ShortName", orientation="h", text="Label",
+                             color=top_col_p4, color_continuous_scale=cs_top,
+                             title=f"{'Bottom' if asc_top else 'Top'} {n_top} SKUs — All FYs ({top_metric})")
+                fig.update_traces(textposition="outside", textfont_size=9)
+                apply_layout(fig, height=max(450, n_top*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                             xaxis=dict(gridcolor="#eeeeee", title=top_metric), coloraxis_showscale=False)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No product-level ZSDCY data available.")
+
+    # ─── PANEL 2: GROWTH EXPLORER (mature only, all products, top/bottom slider) ───
+    with col2:
+        st.markdown(sec(f"🚀 Product Growth Explorer (Mature Only — FY-on-FY)"), unsafe_allow_html=True)
+
+        if has_material_in_z and len(z_fys) >= 2:
+            # FULL FY framing: user picks FROM/TO FY, metric, sort
+            gcf1, gcf2 = st.columns(2)
+            with gcf1:
+                grow_old_fy_p4 = st.selectbox("From FY", z_fys, index=max(0,len(z_fys)-2), key="p4_grow_from")
+            with gcf2:
+                valid_to_fys = [fy for fy in z_fys if fy > grow_old_fy_p4]
+                if valid_to_fys:
+                    grow_new_fy_p4 = st.selectbox("To FY", valid_to_fys,
+                                                   index=len(valid_to_fys)-1, key="p4_grow_to")
+                else:
+                    grow_new_fy_p4 = None
+
+            gcf3, gcf4 = st.columns(2)
+            with gcf3:
+                grow_metric_p4 = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="p4_grow_metric")
+            with gcf4:
+                grow_sort_p4 = st.selectbox("Sort", ["Top (Fastest)", "Bottom (Slowest)"], key="p4_grow_sort")
+
+            grow_col_p4 = "Qty" if grow_metric_p4 == "Units" else "Revenue"
+            grow_fmt_p4 = (lambda v: fmt_num(v) if grow_metric_p4 == "Units" else fmt(v))
+
+            if grow_old_fy_p4 and grow_new_fy_p4:
+                old_mo_z = int(z_fy_months.get(grow_old_fy_p4, 12))
+                new_mo_z = int(z_fy_months.get(grow_new_fy_p4, 12))
+
+                r_old_z = df_zsdcy[df_zsdcy["FiscalYear"]==grow_old_fy_p4].groupby("Material Name")[grow_col_p4].sum()
+                r_new_z = df_zsdcy[df_zsdcy["FiscalYear"]==grow_new_fy_p4].groupby("Material Name")[grow_col_p4].sum()
+
+                # Annualize
+                if old_mo_z < 12:
+                    r_old_z = r_old_z * (12 / old_mo_z)
+                if new_mo_z < 12:
+                    r_new_z = r_new_z * (12 / new_mo_z)
+
+                gz = pd.DataFrame({"old": r_old_z, "new": r_new_z}).fillna(0)
+
+                # Compute launch info from ZSDCY (per Material Name)
+                z_launch = df_zsdcy.copy()
+                z_launch["YrMo"] = z_launch["Yr"].astype(int)*100 + z_launch["Mo"].astype(int)
+                z_launch_agg = z_launch.groupby("Material Name").agg(
+                    FirstYrMo=("YrMo","min"),
+                    ActiveMonths=("YrMo","nunique")
+                ).reset_index()
+                z_launch_agg["FirstSeen"] = pd.to_datetime(z_launch_agg["FirstYrMo"].astype(str), format="%Y%m")
+                today_p4 = pd.Timestamp.today()
+                z_launch_agg["LaunchAgeMonths"] = ((today_p4 - z_launch_agg["FirstSeen"]).dt.days / 30.4).round().astype(int)
+
+                gz = gz.merge(z_launch_agg[["Material Name","LaunchAgeMonths","ActiveMonths"]],
+                               left_index=True, right_on="Material Name", how="left")
+                gz["LaunchAgeMonths"] = gz["LaunchAgeMonths"].fillna(99)
+                gz["ActiveMonths"] = gz["ActiveMonths"].fillna(0)
+
+                # Mature filter: ≥10M baseline, ≥24mo since launch, active in both FYs
+                baseline_z = 100_000 if grow_metric_p4 == "Units" else 10_000_000
+                mature_z = gz[
+                    (gz["old"] >= baseline_z) &
+                    (gz["LaunchAgeMonths"] >= 24) &
+                    (gz["ActiveMonths"] >= 12) &
+                    (gz["new"] > 0)
+                ].copy()
+
+                mature_z["GrowthPct"] = (mature_z["new"]/mature_z["old"] - 1) * 100
+
+                def gf_label_p4(g_pct):
+                    if pd.isna(g_pct): return "—"
+                    if g_pct >= 100: return f"{(g_pct/100)+1:.1f}x"
+                    return f"{g_pct:+.0f}%"
+                mature_z["Label"] = mature_z["GrowthPct"].apply(gf_label_p4)
+                mature_z["ShortName"] = mature_z["Material Name"].astype(str).str[:35]
+
+                total_mature_z = len(mature_z)
+                if total_mature_z == 0:
+                    st.warning(f"No mature SKUs meet filter for {grow_old_fy_p4}→{grow_new_fy_p4}.")
+                else:
+                    asc_grow_p4 = (grow_sort_p4 == "Bottom (Slowest)")
+                    n_grow_p4 = st.slider(f"# SKUs (Total mature: {total_mature_z})",
+                                          5, total_mature_z, min(20, total_mature_z), key="p4_grow_n")
+                    display_grow = mature_z.sort_values("GrowthPct", ascending=asc_grow_p4).head(n_grow_p4).copy()
+
+                    if len(display_grow) >= 2:
+                        g1 = display_grow.iloc[0]
+                        g2 = display_grow.iloc[1]
+                        st.markdown(note(
+                            f"<b>{g1['Material Name']}</b> {gf_label_p4(g1['GrowthPct'])} | "
+                            f"<b>{g2['Material Name']}</b> {gf_label_p4(g2['GrowthPct'])}. "
+                            f"{grow_old_fy_p4} → {grow_new_fy_p4} (annualized). "
+                            f"Filters: ≥{baseline_z/1e6:.0f}M baseline, ≥24mo since launch, active both FYs."
+                        ), unsafe_allow_html=True)
+
+                    colors_z = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" if g >= 0 else "#c62828" for g in display_grow["GrowthPct"]]
+                    fig = go.Figure(go.Bar(x=display_grow["GrowthPct"], y=display_grow["ShortName"], orientation="h",
+                        text=display_grow["Label"], textposition="outside", textfont_size=9, marker_color=colors_z))
+                    apply_layout(fig, height=max(450, n_grow_p4*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                                 xaxis=dict(gridcolor="#eeeeee", title=f"Growth % ({grow_old_fy_p4}→{grow_new_fy_p4})"))
+                    st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Slim ZSDCY → fall back to legacy zsdcy_growth.csv (calendar Y2024 vs Y2025).
+            # Use Y2022/Y2023 to detect "launch year" — products with 0 in earlier years and >0 later = newer.
+            _zg = df_zgrow.copy() if len(df_zgrow) > 0 else pd.DataFrame()
+            if not _zg.empty:
+                if "Rev2024" not in _zg.columns and "Y2024" in _zg.columns:
+                    _zg["Rev2024"] = pd.to_numeric(_zg["Y2024"], errors="coerce").fillna(0)
+                    _zg["Rev2025"] = pd.to_numeric(_zg["Y2025"], errors="coerce").fillna(0)
+                if "Material Name" not in _zg.columns:
+                    _zg["Material Name"] = _zg["Product"] if "Product" in _zg.columns else _zg.iloc[:,0]
+                for col in ["Y2022","Y2023","Y2024","Y2025","Rev2024","Rev2025"]:
+                    if col in _zg.columns:
+                        _zg[col] = pd.to_numeric(_zg[col], errors="coerce").fillna(0)
+
+                # Launch year detection: first year with revenue >0
+                def detect_launch_year(row):
+                    for y in [2022,2023,2024,2025]:
+                        col = f"Y{y}"
+                        if col in row.index and row[col] > 0:
+                            return y
+                    return None
+                _zg["LaunchYear"] = _zg.apply(detect_launch_year, axis=1)
+
+                gscf1, gscf2 = st.columns(2)
+                with gscf1:
+                    grow_metric_slim = st.radio("Metric", ["Revenue"], horizontal=True, key="p4_grow_metric_slim",
+                                                 help="ZSDCY legacy growth file is revenue-only.")
+                with gscf2:
+                    grow_sort_slim = st.selectbox("Sort", ["Top (Fastest)", "Bottom (Slowest)"], key="p4_grow_sort_slim")
+
+                # Mature: launch ≤2023 AND Rev2024 ≥ 10M AND Rev2025 > 0
+                _zg["GrowthPct"] = ((_zg["Rev2025"]/_zg["Rev2024"].replace(0,1) - 1) * 100).where(_zg["Rev2024"] >= 10_000_000, 0)
+                mature_zg = _zg[
+                    (_zg["Rev2024"] >= 10_000_000) &
+                    (_zg["Rev2025"] > 0) &
+                    (_zg["LaunchYear"].fillna(2026) <= 2023)
+                ].copy()
+
+                def gf_label_slim(g_pct):
+                    if pd.isna(g_pct): return "—"
+                    if g_pct >= 100: return f"{(g_pct/100)+1:.1f}x"
+                    return f"{g_pct:+.0f}%"
+                mature_zg["Label"] = mature_zg["GrowthPct"].apply(gf_label_slim)
+                mature_zg["ShortName"] = mature_zg["Material Name"].astype(str).str[:35]
+
+                total_mature_zg = len(mature_zg)
+                if total_mature_zg == 0:
+                    st.info("No mature ZSDCY products found in legacy growth file.")
+                else:
+                    asc_grow_slim = (grow_sort_slim == "Bottom (Slowest)")
+                    n_grow_slim = st.slider(f"# SKUs (Total mature: {total_mature_zg})",
+                                             5, total_mature_zg, min(20, total_mature_zg), key="p4_grow_n_slim")
+                    display_slim = mature_zg.sort_values("GrowthPct", ascending=asc_grow_slim).head(n_grow_slim).copy()
+
+                    if len(display_slim) >= 2:
+                        g1 = display_slim.iloc[0]
+                        g2 = display_slim.iloc[1]
+                        st.markdown(note(
+                            f"<b>{g1['Material Name']}</b> {gf_label_slim(g1['GrowthPct'])} | "
+                            f"<b>{g2['Material Name']}</b> {gf_label_slim(g2['GrowthPct'])}. "
+                            f"⚠️ Calendar 2024→2025 (slim ZSDCY data lacks Material Name for FY framing). "
+                            f"Mature filter: ≥PKR 10M baseline + launched ≤2023."
+                        ), unsafe_allow_html=True)
+
+                    colors_zl = ["#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" if g >= 0 else "#c62828" for g in display_slim["GrowthPct"]]
+                    fig = go.Figure(go.Bar(x=display_slim["GrowthPct"], y=display_slim["ShortName"], orientation="h",
+                        text=display_slim["Label"], textposition="outside", textfont_size=9, marker_color=colors_zl))
+                    apply_layout(fig, height=max(450, n_grow_slim*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                                 xaxis=dict(gridcolor="#eeeeee", title="Growth % (2024 → 2025)"))
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Growth analysis requires either Material Name in zsdcy_clean.csv OR a populated zsdcy_growth.csv file.")
 
     # ── City-Level Revenue Distribution ──
     st.markdown(sec("🗺️ City-Level Revenue Distribution"), unsafe_allow_html=True)
