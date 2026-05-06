@@ -713,7 +713,7 @@ if page == "📈 Sales Analysis":
     with col_sf1:
         if total_products >= 5:
             n_prods_s = st.slider(f"Number of products (Total: {total_products})",
-                                  5, total_products, min(20, total_products), key="sales_n")
+                                  5, total_products, min(50, total_products), key="sales_n")
         else:
             n_prods_s = total_products
             st.caption(f"Total products available: {total_products}")
@@ -825,7 +825,7 @@ if page == "📈 Sales Analysis":
             scope_sorted = scope.sort_values("GrowthPct", ascending=asc_grow).reset_index(drop=True)
 
             n_grow = st.slider(f"Number of products to show (Total: {total_in_scope})",
-                               5, total_in_scope, min(20, total_in_scope), key="p1_grow_n")
+                               5, total_in_scope, min(50, total_in_scope), key="p1_grow_n")
             display_grow = scope_sorted.head(n_grow).copy()
 
             col_a, col_b = st.columns(2)
@@ -1773,7 +1773,7 @@ elif page == "📦 Distribution Analysis":
             with tcf4:
                 if total_skus >= 5:
                     n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
-                                      min(20, total_skus), key="p4_top_n")
+                                      min(50, total_skus), key="p4_top_n")
                 else:
                     n_top = total_skus
                     st.caption(f"Total SKUs: {total_skus}")
@@ -1806,7 +1806,7 @@ elif page == "📦 Distribution Analysis":
                 with tcf_slim:
                     if total_skus >= 5:
                         n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
-                                          min(20, total_skus), key="p4_top_n_slim")
+                                          min(50, total_skus), key="p4_top_n_slim")
                     else:
                         n_top = total_skus
                         st.caption(f"Total SKUs: {total_skus}")
@@ -1925,7 +1925,7 @@ elif page == "📦 Distribution Analysis":
                 else:
                     asc_grow_p4 = (grow_sort_p4 == "Bottom (Slowest)")
                     n_grow_p4 = st.slider(f"# SKUs (Total: {total_z})",
-                                          5, total_z, min(20, total_z), key="p4_grow_n")
+                                          5, total_z, min(50, total_z), key="p4_grow_n")
                     display_grow_p4 = scope_z.sort_values("GrowthPct", ascending=asc_grow_p4).head(n_grow_p4).copy()
 
                     if len(display_grow_p4) >= 2:
@@ -2022,7 +2022,7 @@ elif page == "📦 Distribution Analysis":
                 else:
                     asc_grow_slim = (grow_sort_slim == "Bottom (Slowest)")
                     n_grow_slim = st.slider(f"# SKUs (Total: {total_zg})",
-                                             5, total_zg, min(20, total_zg), key="p4_grow_n_slim")
+                                             5, total_zg, min(50, total_zg), key="p4_grow_n_slim")
                     display_slim = scope_zg.sort_values("GrowthPct", ascending=asc_grow_slim).head(n_grow_slim).copy()
 
                     if len(display_slim) >= 2:
