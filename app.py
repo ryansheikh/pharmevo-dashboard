@@ -1020,20 +1020,26 @@ elif page == "💰 Promotional Analysis":
         peak_fy, peak_amt, peak_suffix = "N/A", 0, ""
 
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Promo Spend (Selected FYs)", fmt(total_sp_sel))
-    if FY_PREV_P3:
-        c2.metric(f"ROI {FY_PREV_P3}", f"{roi_prev:.1f}x", delta="Baseline")
+    # KPI pattern: ALL FOUR are FY-wise totals from FTTS Activities database (Pakistan FY: Jul–Jun)
+    c1.metric(f"Total Promo Spend — {FY_PREV_P3 or 'FY-2'}",
+               fmt(float(_fy_spend.get(FY_PREV_P3, 0))) if FY_PREV_P3 else "N/A",
+               help=f"Pakistan Fiscal Year (Jul {FY_PREV_P3.split('-')[0] if FY_PREV_P3 else ''} – Jun {FY_PREV_P3.split('-')[0][:2]+FY_PREV_P3.split('-')[1] if FY_PREV_P3 else ''})" if FY_PREV_P3 else "Prior complete fiscal year")
+    c2.metric(f"Total Promo Spend — {FY_LAST_P3 or 'FY-1'}",
+               fmt(float(_fy_spend.get(FY_LAST_P3, 0))) if FY_LAST_P3 else "N/A",
+               delta=f"{((float(_fy_spend.get(FY_LAST_P3,0))/float(_fy_spend.get(FY_PREV_P3,1))-1)*100):+.1f}% vs {FY_PREV_P3}" if FY_PREV_P3 and FY_LAST_P3 and float(_fy_spend.get(FY_PREV_P3,0))>0 else None,
+               help=f"Latest complete fiscal year")
+    if FY_CURR_P3:
+        _curr_mo = int(_fy_mo_act.get(FY_CURR_P3, 0))
+        c3.metric(f"Total Promo Spend — {FY_CURR_P3}",
+                   fmt(float(_fy_spend.get(FY_CURR_P3, 0))),
+                   delta=f"{_curr_mo}mo of 12 (partial)",
+                   delta_color="off",
+                   help=f"Current fiscal year — partial data ({_curr_mo} months)")
     else:
-        c2.metric("ROI (Prior FY)", "N/A")
-    if FY_LAST_P3 and FY_PREV_P3:
-        c3.metric(f"ROI {FY_LAST_P3}", f"{roi_last:.1f}x",
-                  delta=f"{roi_last-roi_prev:+.1f}x vs {FY_PREV_P3}",
-                  delta_color="inverse")  # higher ROI is better, but negative delta = worse
-    elif FY_LAST_P3:
-        c3.metric(f"ROI {FY_LAST_P3}", f"{roi_last:.1f}x")
-    else:
-        c3.metric("ROI (Latest FY)", "N/A")
-    c4.metric("Peak Spend FY", peak_fy, delta=f"{fmt(peak_amt)}{peak_suffix}")
+        c3.metric("Total Promo Spend — Current FY", "N/A", help="Current FY has no data yet")
+    c4.metric(f"Cumulative — All FYs ({_fy_sorted_p3[0] if _fy_sorted_p3 else '?'} → {_fy_sorted_p3[-1] if _fy_sorted_p3 else '?'})",
+               fmt(total_spend_all),
+               help=f"Total promo spend across {len(_fy_sorted_p3)} fiscal years")
     st.markdown("---")
 
     # ── Row A: Spend by FY + Activity Type Pie ──
@@ -1358,16 +1364,61 @@ elif page == "✈️ Travel Analysis":
         "Note: This DB captures inter-city air/hotel travel only — local field visits (e.g., within Karachi) are NOT included."
     ), unsafe_allow_html=True)
 
-    total_trips  = df_t["TravelCount"].sum()
-    total_nights = df_t["NoofNights"].sum()
-    total_people = df_t["Traveller"].nunique()
-    total_locs   = df_t["VisitLocation"].nunique()
+    # KPI pattern: ALL FOUR are FY-wise totals from FTTS Travel database (Pakistan FY: Jul–Jun)
+    # Use df_travel (full) so KPIs show specific FY data, not sidebar-filtered combined
+    _all_fys_p3kpi = sorted(df_travel["FiscalYear"].dropna().unique()) if "FiscalYear" in df_travel.columns else []
+    _fy_mo_t   = df_travel.groupby("FiscalYear")["Mo"].nunique() if _all_fys_p3kpi else pd.Series(dtype=int)
+    _complete_p3kpi = [fy for fy in _all_fys_p3kpi if _fy_mo_t.get(fy, 0) == 12]
+    P3_FY_PREV = _complete_p3kpi[-2] if len(_complete_p3kpi) >= 2 else None
+    P3_FY_LAST = _complete_p3kpi[-1] if _complete_p3kpi else None
+    P3_FY_CURR = _all_fys_p3kpi[-1] if _all_fys_p3kpi and _all_fys_p3kpi[-1] not in _complete_p3kpi else None
+
+    def _trips_for(fy):
+        return int(df_travel[df_travel["FiscalYear"]==fy]["TravelCount"].sum()) if fy and "FiscalYear" in df_travel.columns else 0
+    def _people_for(fy):
+        return int(df_travel[df_travel["FiscalYear"]==fy]["Traveller"].nunique()) if fy and "FiscalYear" in df_travel.columns else 0
+
+    trips_prev = _trips_for(P3_FY_PREV)
+    trips_last = _trips_for(P3_FY_LAST)
+    trips_curr = _trips_for(P3_FY_CURR)
+    trips_all  = int(df_travel["TravelCount"].sum())
+    people_all = int(df_travel["Traveller"].nunique())
+    cities_all = int(df_travel["VisitLocation"].nunique())
 
     c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Trips (All FYs)",    fmt_num(total_trips))
-    c2.metric("Total Nights",             fmt_num(total_nights))
-    c3.metric("Unique Travellers",        str(total_people))
-    c4.metric("Cities Covered",           str(total_locs))
+    c1.metric(f"Total Trips — {P3_FY_PREV or 'FY-2'}",
+               fmt_num(trips_prev) if P3_FY_PREV else "N/A",
+               help=f"Pakistan Fiscal Year (Jul–Jun): {P3_FY_PREV}" if P3_FY_PREV else "Prior complete fiscal year")
+    c2.metric(f"Total Trips — {P3_FY_LAST or 'FY-1'}",
+               fmt_num(trips_last) if P3_FY_LAST else "N/A",
+               delta=f"{((trips_last/trips_prev-1)*100):+.1f}% vs {P3_FY_PREV}" if P3_FY_PREV and trips_prev > 0 else None,
+               help=f"Latest complete fiscal year")
+    if P3_FY_CURR:
+        _curr_mo_p3 = int(_fy_mo_t.get(P3_FY_CURR, 0))
+        c3.metric(f"Total Trips — {P3_FY_CURR}",
+                   fmt_num(trips_curr),
+                   delta=f"{_curr_mo_p3}mo of 12 (partial)",
+                   delta_color="off",
+                   help=f"Current fiscal year — partial data")
+    else:
+        c3.metric("Total Trips — Current FY", "N/A")
+    c4.metric(f"Cumulative — All FYs ({_all_fys_p3kpi[0] if _all_fys_p3kpi else '?'} → {_all_fys_p3kpi[-1] if _all_fys_p3kpi else '?'})",
+               fmt_num(trips_all),
+               help=f"All FYs combined: {people_all} unique people, {cities_all} cities")
+    st.markdown("---")
+
+    # Secondary supporting tiles (smaller — gives extra context without breaking pattern)
+    c1b, c2b, c3b, c4b = st.columns(4)
+    c1b.markdown(kpi("Unique People (All FYs)", str(people_all),
+                      "Number of distinct travellers"), unsafe_allow_html=True)
+    c2b.markdown(kpi("Cities Covered (All FYs)", str(cities_all),
+                      "Distinct visit locations"), unsafe_allow_html=True)
+    total_nights = int(df_travel["NoofNights"].sum())
+    c3b.markdown(kpi("Total Nights (All FYs)", fmt_num(total_nights),
+                      "Hotel nights booked"), unsafe_allow_html=True)
+    avg_trips_per_person = round(trips_all / people_all, 1) if people_all > 0 else 0
+    c4b.markdown(kpi("Avg Trips/Person (All FYs)", f"{avg_trips_per_person:.1f}",
+                      f"Across {people_all} people"), unsafe_allow_html=True)
     st.markdown("---")
 
     # ── Row A: Travel by FY + Top Cities ──
@@ -1777,32 +1828,66 @@ elif page == "📦 Distribution Analysis":
         f"All metrics use Pakistan fiscal year (Jul–Jun)."
     ), unsafe_allow_html=True)
 
-    # Simple, meaningful KPIs (no declining metrics)
+    # KPI pattern: ALL are FY-wise totals from ZSDCY database (Pakistan FY: Jul–Jun, Distribution data)
+    def _zrev_for(fy):
+        return float(df_zsdcy[df_zsdcy["FiscalYear"]==fy]["Revenue"].sum()) if fy and "FiscalYear" in df_zsdcy.columns else 0
+    rev_prev_z = _zrev_for(z_fy_prev)
+    rev_last_z = _zrev_for(z_fy_last)
+
     c1,c2,c3,c4,c5 = st.columns(5)
-    c1.markdown(kpi("Total Revenue",   fmt(total_rev_z),   "All FYs combined"), unsafe_allow_html=True)
-    c2.markdown(kpi("Total Units",     fmt_num(total_qty_z), "Units delivered"), unsafe_allow_html=True)
-    c3.markdown(kpi("Cities Covered",  str(total_cities),  "Unique locations"), unsafe_allow_html=True)
-    c4.markdown(kpi("Distributors",    str(total_sdps),    "Active SDP partners"), unsafe_allow_html=True)
-    if z_fy_prev and z_fy_last and z_fy_prev != z_fy_last:
-        annualized_note = "annualized" if mo_last < 12 else f"{z_fy_prev}→{z_fy_last}"
-        c5.markdown(kpi("YoY Growth", f"{growth_z:+.1f}%", annualized_note), unsafe_allow_html=True)
+    c1.markdown(kpi(f"Total Revenue — {z_fy_prev or 'FY-2'}",
+                     fmt(rev_prev_z) if z_fy_prev else "N/A",
+                     f"Pakistan FY (Jul–Jun)" if z_fy_prev else "Prior fiscal year"),
+                 unsafe_allow_html=True)
+    if z_fy_last and z_fy_last != z_fy_prev:
+        _last_mo_label = f"Latest FY ({mo_last}mo of 12)" if mo_last < 12 else "Latest complete FY"
+        c2.markdown(kpi(f"Total Revenue — {z_fy_last}",
+                         fmt(rev_last_z),
+                         _last_mo_label),
+                     unsafe_allow_html=True)
     else:
-        c5.markdown(kpi("Top City", top_city, fmt(top_city_rev)), unsafe_allow_html=True)
+        c2.markdown(kpi("Total Revenue — Latest FY", "N/A", "Need ≥2 FYs"), unsafe_allow_html=True)
+    c3.markdown(kpi(f"Cumulative — All FYs ({z_fys[0] if z_fys else '?'} → {z_fys[-1] if z_fys else '?'})",
+                     fmt(total_rev_z),
+                     f"{len(z_fys)} fiscal years combined"),
+                 unsafe_allow_html=True)
+    c4.markdown(kpi("Cities Covered (All FYs)",
+                     str(total_cities),
+                     f"Distributors: {total_sdps} SDPs"),
+                 unsafe_allow_html=True)
+    if z_fy_prev and z_fy_last and z_fy_prev != z_fy_last:
+        annualized_note = f"Annualized: {z_fy_prev} ({mo_prev}mo) → {z_fy_last} ({mo_last}mo)" if (mo_prev < 12 or mo_last < 12) else f"{z_fy_prev} → {z_fy_last}"
+        c5.markdown(kpi(f"YoY Growth ({z_fy_prev} → {z_fy_last})",
+                         f"{growth_z:+.1f}%",
+                         annualized_note),
+                     unsafe_allow_html=True)
+    else:
+        c5.markdown(kpi("YoY Growth", "N/A", "Need 2 fiscal years"), unsafe_allow_html=True)
     st.markdown("---")
 
     # ── Category analysis (Bar + Pie) ──
     cat_map_d = {"P":"Pharma","N":"Nutraceutical","M":"Medical Device","H":"Herbal","E":"Export","O":"Other"}
+
+    # FY filter for the entire category section (applies to both bar and pie)
+    cat_fy_options = ["All Fiscal Years"] + z_fys
+    p4_cat_fy = st.selectbox("Fiscal Year filter", cat_fy_options, key="p4_cat_fy")
+    if p4_cat_fy == "All Fiscal Years":
+        df_cat_src = df_zsdcy
+    else:
+        df_cat_src = df_zsdcy[df_zsdcy["FiscalYear"] == p4_cat_fy] if "FiscalYear" in df_zsdcy.columns else df_zsdcy
+    st.caption(f"📅 Showing: **{p4_cat_fy}**")
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("📊 Revenue by Product Category"), unsafe_allow_html=True)
 
         # Live-computed insight
-        cat_rev = df_zsdcy.groupby("Category")["Revenue"].sum().reset_index()
+        cat_rev = df_cat_src.groupby("Category")["Revenue"].sum().reset_index()
         cat_rev["CategoryName"] = cat_rev["Category"].map(cat_map_d).fillna(cat_rev["Category"])
         cat_rev = cat_rev.sort_values("Revenue", ascending=False)
         tot = cat_rev["Revenue"].sum()
 
-        # Compute category growth for the insight
+        # Compute category growth for the insight (use df_zsdcy for YoY context)
         cat_yr_agg = df_zsdcy.groupby(["Category","Yr"])["Revenue"].sum().unstack(fill_value=0)
         growth_str = ""
         if 2024 in cat_yr_agg.columns and 2025 in cat_yr_agg.columns and len(cat_rev) >= 2:
@@ -1819,17 +1904,32 @@ elif page == "📦 Distribution Analysis":
         st.markdown(note(growth_str or "Revenue breakdown by product category."), unsafe_allow_html=True)
 
         cat_rev["Label"] = cat_rev["Revenue"].apply(fmt)
-        fig = px.bar(cat_rev, x="Revenue", y="CategoryName", orientation="h", text="Label",
-                     color="Revenue", color_continuous_scale="Blues")
-        fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=300, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"), coloraxis_showscale=False)
+        # VERTICAL bar chart (x = category, y = revenue) with distinct colors per category
+        category_palette = {
+            "Pharma":         "#1565c0",
+            "Nutraceutical":  "#2e7d32",
+            "Medical Device": "#e65100",
+            "Herbal":         "#6a1b9a",
+            "Export":         "#00838f",
+            "Other":          "#9e9e9e",
+        }
+        cat_rev["Color"] = cat_rev["CategoryName"].map(category_palette).fillna("#5d7a8c")
+        fig = go.Figure(go.Bar(
+            x=cat_rev["CategoryName"], y=cat_rev["Revenue"],
+            text=cat_rev["Label"], textposition="outside", textfont_size=12,
+            marker=dict(color=cat_rev["Color"].tolist())
+        ))
+        apply_layout(fig, height=380,
+                     xaxis=dict(gridcolor="#eeeeee", title="Product Category"),
+                     yaxis=dict(gridcolor="#eeeeee", title="Revenue (PKR)"))
         st.plotly_chart(fig, use_container_width=True)
     with col2:
+        st.markdown(sec("🥧 Revenue Share by Category"), unsafe_allow_html=True)
+        st.caption(f"📅 {p4_cat_fy} — same data as bar chart, different view.")
         fig = px.pie(cat_rev, values="Revenue", names="CategoryName",
-                     color_discrete_sequence=px.colors.qualitative.Set2)
+                     color="CategoryName", color_discrete_map=category_palette)
         fig.update_traces(textinfo="percent+label", textfont_size=11)
-        apply_layout(fig, height=300)
+        apply_layout(fig, height=380)
         st.plotly_chart(fig, use_container_width=True)
 
     # ── Monthly Revenue Trend — by FISCAL YEAR ──
@@ -2268,9 +2368,18 @@ elif page == "📦 Distribution Analysis":
 
     # ── City-Level Revenue Distribution ──
     st.markdown(sec("🗺️ City-Level Revenue Distribution"), unsafe_allow_html=True)
+    # FY filter for city distribution
+    city_fy_options = ["All Fiscal Years"] + z_fys
+    p4_city_fy = st.selectbox("Fiscal Year", city_fy_options, key="p4_city_dist_fy")
+    if p4_city_fy == "All Fiscal Years":
+        df_city_src = df_zsdcy
+    else:
+        df_city_src = df_zsdcy[df_zsdcy["FiscalYear"] == p4_city_fy] if "FiscalYear" in df_zsdcy.columns else df_zsdcy
+    st.caption(f"📅 Showing: **{p4_city_fy}**")
+
     col1, col2 = st.columns(2)
     with col1:
-        city_total_z = df_zcity.groupby("City")["Revenue"].sum().nlargest(20).reset_index()
+        city_total_z = df_city_src.groupby("City")["Revenue"].sum().nlargest(20).reset_index()
         city_total_z["Label"] = city_total_z["Revenue"].apply(fmt)
         fig = px.bar(city_total_z, x="Revenue", y="City", orientation="h", text="Label",
                      color="Revenue", color_continuous_scale="Blues")
@@ -2282,54 +2391,67 @@ elif page == "📦 Distribution Analysis":
         st.markdown(sec(f"📈 City Growth (Mature, FY-on-FY)"), unsafe_allow_html=True)
 
         if "FiscalYear" in df_zsdcy.columns and len(z_fys) >= 2:
-            old_fy_c = z_fys[-2]
-            new_fy_c = z_fys[-1]
-            old_mo_c = int(z_fy_months.get(old_fy_c, 12))
-            new_mo_c = int(z_fy_months.get(new_fy_c, 12))
+            # FROM/TO FY pickers (default to last 2 FYs)
+            cgcf1, cgcf2 = st.columns(2)
+            with cgcf1:
+                old_fy_c = st.selectbox("From FY", z_fys, index=max(0,len(z_fys)-2), key="p4_city_grow_from")
+            with cgcf2:
+                valid_to = [fy for fy in z_fys if fy > old_fy_c]
+                new_fy_c = st.selectbox("To FY", valid_to,
+                                          index=len(valid_to)-1 if valid_to else 0,
+                                          key="p4_city_grow_to") if valid_to else None
+            st.caption(f"📅 Comparing: **{old_fy_c} → {new_fy_c}**")
 
-            city_old = df_zsdcy[df_zsdcy["FiscalYear"]==old_fy_c].groupby("City")["Revenue"].sum()
-            city_new = df_zsdcy[df_zsdcy["FiscalYear"]==new_fy_c].groupby("City")["Revenue"].sum()
-
-            # Annualize
-            if old_mo_c < 12:
-                city_old = city_old * (12/old_mo_c)
-            if new_mo_c < 12:
-                city_new = city_new * (12/new_mo_c)
-
-            city_g = pd.DataFrame({"old": city_old, "new": city_new}).fillna(0)
-            # Active in both FYs (matters for cities that didn't exist before)
-            city_active = df_zsdcy.groupby(["City","FiscalYear"])["Revenue"].sum().reset_index()
-            city_active_count = city_active.groupby("City")["FiscalYear"].nunique()
-            city_g = city_g[(city_g["old"] >= 10_000_000) & (city_g.index.isin(city_active_count[city_active_count>=2].index))]
-            city_g["GrowthPct"] = (city_g["new"]/city_g["old"] - 1) * 100
-
-            def gf_label_c(g_pct):
-                if pd.isna(g_pct): return "—"
-                if g_pct >= 100:
-                    return f"{(g_pct/100)+1:.1f}x"
-                else:
-                    return f"{g_pct:+.0f}%"
-
-            # Live insight
-            if len(city_g) >= 2:
-                top_cg = city_g.sort_values("GrowthPct", ascending=False).head(2)
-                c1n = top_cg.index[0]; c1g = top_cg["GrowthPct"].iloc[0]
-                c2n = top_cg.index[1]; c2g = top_cg["GrowthPct"].iloc[1]
-                st.markdown(note(
-                    f"Fastest-growing cities: <b>{c1n}</b> {gf_label_c(c1g)}, <b>{c2n}</b> {gf_label_c(c2g)}. "
-                    f"{old_fy_c} → {new_fy_c} (annualized). ≥PKR 10M baseline."
-                ), unsafe_allow_html=True)
+            if not new_fy_c or old_fy_c == new_fy_c:
+                st.info("Pick two different fiscal years to compare.")
             else:
-                st.markdown(note(f"Cities sorted by {old_fy_c}→{new_fy_c} revenue growth."), unsafe_allow_html=True)
+                old_mo_c = int(z_fy_months.get(old_fy_c, 12))
+                new_mo_c = int(z_fy_months.get(new_fy_c, 12))
 
-            city_g_show = city_g.sort_values("GrowthPct", ascending=False).head(20).reset_index()
-            city_g_show["Label"] = city_g_show["GrowthPct"].apply(gf_label_c)
-            colors_cg = ["#2e7d32" if g>=30 else "#1565c0" if g>=0 else "#c62828" for g in city_g_show["GrowthPct"]]
-            fig = go.Figure(go.Bar(x=city_g_show["GrowthPct"], y=city_g_show["City"], orientation="h",
-                text=city_g_show["Label"], textposition="outside", textfont_size=10, marker_color=colors_cg))
-            apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                         xaxis=dict(gridcolor="#eeeeee", title=f"Revenue Growth % ({old_fy_c}→{new_fy_c})"))
-            st.plotly_chart(fig, use_container_width=True)
+                city_old = df_zsdcy[df_zsdcy["FiscalYear"]==old_fy_c].groupby("City")["Revenue"].sum()
+                city_new = df_zsdcy[df_zsdcy["FiscalYear"]==new_fy_c].groupby("City")["Revenue"].sum()
+
+                # Annualize
+                if old_mo_c < 12:
+                    city_old = city_old * (12/old_mo_c)
+                if new_mo_c < 12:
+                    city_new = city_new * (12/new_mo_c)
+
+                city_g = pd.DataFrame({"old": city_old, "new": city_new}).fillna(0)
+                # Active in both FYs (matters for cities that didn't exist before)
+                city_active = df_zsdcy.groupby(["City","FiscalYear"])["Revenue"].sum().reset_index()
+                city_active_count = city_active.groupby("City")["FiscalYear"].nunique()
+                city_g = city_g[(city_g["old"] >= 10_000_000) & (city_g.index.isin(city_active_count[city_active_count>=2].index))]
+                city_g["GrowthPct"] = (city_g["new"]/city_g["old"] - 1) * 100
+
+                def gf_label_c(g_pct):
+                    if pd.isna(g_pct): return "—"
+                    if g_pct >= 100:
+                        return f"{(g_pct/100)+1:.1f}x"
+                    else:
+                        return f"{g_pct:+.0f}%"
+
+                # Live insight
+                if len(city_g) >= 2:
+                    top_cg = city_g.sort_values("GrowthPct", ascending=False).head(2)
+                    c1n = top_cg.index[0]; c1g = top_cg["GrowthPct"].iloc[0]
+                    c2n = top_cg.index[1]; c2g = top_cg["GrowthPct"].iloc[1]
+                    annot = f"({old_mo_c}mo → {new_mo_c}mo, annualized)" if (old_mo_c<12 or new_mo_c<12) else ""
+                    st.markdown(note(
+                        f"Fastest-growing cities: <b>{c1n}</b> {gf_label_c(c1g)}, <b>{c2n}</b> {gf_label_c(c2g)}. "
+                        f"{old_fy_c} → {new_fy_c} {annot}. ≥PKR 10M baseline."
+                    ), unsafe_allow_html=True)
+                else:
+                    st.markdown(note(f"Cities sorted by {old_fy_c}→{new_fy_c} revenue growth."), unsafe_allow_html=True)
+
+                city_g_show = city_g.sort_values("GrowthPct", ascending=False).head(20).reset_index()
+                city_g_show["Label"] = city_g_show["GrowthPct"].apply(gf_label_c)
+                colors_cg = ["#2e7d32" if g>=30 else "#1565c0" if g>=0 else "#c62828" for g in city_g_show["GrowthPct"]]
+                fig = go.Figure(go.Bar(x=city_g_show["GrowthPct"], y=city_g_show["City"], orientation="h",
+                    text=city_g_show["Label"], textposition="outside", textfont_size=10, marker_color=colors_cg))
+                apply_layout(fig, height=580, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                             xaxis=dict(gridcolor="#eeeeee", title=f"Revenue Growth % ({old_fy_c}→{new_fy_c})"))
+                st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("FY-based city growth needs FiscalYear in ZSDCY data + ≥2 FYs.")
 
