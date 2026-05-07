@@ -2940,6 +2940,24 @@ Potential annual saving:
         # ═══ 10 Key Findings ═══
         st.markdown("### 🎯 Key Management Findings")
 
+        # ─── Variable setup for FINDING 2 (top-ROI product) ───
+        # These were previously computed inside FINDING 1 (now removed).
+        _rv_ei  = _sales_gross_ei.groupby("ProductName")["TotalRevenue"].sum()
+        _sp_ei  = df_act.groupby("Product")["TotalAmount"].sum()
+        _roi_ei = pd.DataFrame({"Revenue": _rv_ei, "Spend": _sp_ei}).dropna()
+        _roi_ei = _roi_ei[(_roi_ei["Spend"] > 1e6) & (_roi_ei["Revenue"] > 10e6)]
+        _roi_ei["ROI"] = _roi_ei["Revenue"] / _roi_ei["Spend"]
+        _roi_ei = _roi_ei.sort_values("ROI", ascending=False)
+        if len(_roi_ei) > 0:
+            top_product_name  = str(_roi_ei.index[0])
+            top_product_roi   = float(_roi_ei.iloc[0]["ROI"])
+            top_product_rev   = float(_roi_ei.iloc[0]["Revenue"])
+            top_product_spend = float(_roi_ei.iloc[0]["Spend"])
+            _top_roi_f2       = _roi_ei.head(10).copy()
+        else:
+            top_product_name, top_product_roi, top_product_rev, top_product_spend = "N/A", 0.0, 0.0, 0.0
+            _top_roi_f2 = pd.DataFrame({"ROI": []})
+
         st.markdown(sec(f"🟢 FINDING 2 — {top_product_name}: {fmt(top_product_spend)} Investment Returns {fmt(top_product_rev)} ({top_product_roi:.1f}x ROI)"), unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
