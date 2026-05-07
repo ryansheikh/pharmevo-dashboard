@@ -444,6 +444,77 @@ product_launch = compute_product_launch_dates(df_sales)
 _all_fys = sorted([fy for fy in df_sales["FiscalYear"].dropna().unique()])
 _default_fys = _all_fys[-4:] if len(_all_fys) >= 4 else _all_fys
 
+# ── Product Reconciliation: cross-database product universe analysis ──
+# Computes the "ghost products" universe — products with promo spend but no sales.
+# This is referenced by Page 1 (full reconciliation section) AND
+# tooltip disclaimers on every page that shows product counts.
+@st.cache_data(ttl=86400)
+def compute_product_reconciliation(_df_sales, _df_act, _all_fys_ref):
+    """Returns a dict with reconciliation counts and ghost product list.
+
+    Counts are case-insensitive, normalized for matching.
+    """
+    # Active products in DSR (sales side)
+    if "SaleFlag" in _df_sales.columns:
+        sales_active = _df_sales[
+            (_df_sales["SaleFlag"].isin(["S","R"])) &
+            (_df_sales["TotalRevenue"].notna())
+        ].copy()
+    else:
+        sales_active = _df_sales.copy()
+    dsr_products_set = set(sales_active["ProductName"].dropna().astype(str).str.strip().str.upper().unique())
+
+    # Promo products in FTTS (activities side)
+    promo_active = _df_act[_df_act["TotalAmount"] > 0].copy() if "TotalAmount" in _df_act.columns else _df_act.copy()
+    ftts_products_set = set(promo_active["Product"].dropna().astype(str).str.strip().str.upper().unique())
+
+    # Per-FY counts
+    def _per_fy_dsr(fy):
+        if "FiscalYear" not in sales_active.columns or fy is None: return 0
+        s = sales_active[sales_active["FiscalYear"] == fy]
+        return s["ProductName"].dropna().astype(str).str.strip().str.upper().nunique()
+
+    def _per_fy_ftts(fy):
+        if "FiscalYear" not in promo_active.columns or fy is None: return 0
+        a = promo_active[promo_active["FiscalYear"] == fy]
+        return a["Product"].dropna().astype(str).str.strip().str.upper().nunique()
+
+    # Ghost = in FTTS but not in DSR (promo spent, no sales)
+    ghost_products = ftts_products_set - dsr_products_set
+    overlap = dsr_products_set & ftts_products_set
+
+    # Map ghost products back to original case + show their promo spend
+    ghost_records = []
+    for prod_upper in ghost_products:
+        orig_rows = promo_active[promo_active["Product"].astype(str).str.strip().str.upper() == prod_upper]
+        if len(orig_rows) > 0:
+            orig_name = str(orig_rows["Product"].iloc[0]).strip()
+            spend = orig_rows["TotalAmount"].sum() if "TotalAmount" in orig_rows.columns else 0
+            ghost_records.append({"Product": orig_name, "PromoSpend": float(spend),
+                                   "ActivityCount": int(len(orig_rows))})
+
+    ghost_df = pd.DataFrame(ghost_records).sort_values("PromoSpend", ascending=False) if ghost_records else pd.DataFrame()
+
+    fy_curr = _all_fys_ref[-1] if _all_fys_ref else None
+    fy_last = _all_fys_ref[-2] if len(_all_fys_ref) >= 2 else None
+
+    return {
+        "dsr_count_total":       len(dsr_products_set),
+        "ftts_count_total":      len(ftts_products_set),
+        "overlap_count":         len(overlap),
+        "ghost_count":           len(ghost_products),
+        "ghost_total_spend":     ghost_df["PromoSpend"].sum() if len(ghost_df) > 0 else 0,
+        "ghost_df":              ghost_df,
+        "dsr_count_fy_curr":     _per_fy_dsr(fy_curr),
+        "dsr_count_fy_last":     _per_fy_dsr(fy_last),
+        "ftts_count_fy_curr":    _per_fy_ftts(fy_curr),
+        "ftts_count_fy_last":    _per_fy_ftts(fy_last),
+        "fy_last":               fy_last,
+        "fy_curr":               fy_curr,
+    }
+
+product_recon = compute_product_reconciliation(df_sales, df_act, _all_fys)
+
 # ── HELPERS ──────────────────────────────────────────────────
 def fmt(val):
     if val >= 1e9:   return f"PKR {val/1e9:.1f}B"
@@ -647,6 +718,87 @@ if page == "📈 Sales Analysis":
 
     fmt_metric = (lambda v: fmt_num(v) if is_units else fmt(v))
 
+    # ════════════════════════════════════════════════════════════════════
+    # 🔬 PRODUCT RECONCILIATION — cross-database product universe finding
+    # ════════════════════════════════════════════════════════════════════
+    st.markdown(sec("🔬 Product Reconciliation — Where Are We Spending Promo Without Sales Return?"), unsafe_allow_html=True)
+    _recon = product_recon
+    _ghost_df = _recon.get("ghost_df", pd.DataFrame())
+    _ghost_count = int(_recon.get("ghost_count", 0))
+    _ghost_spend = float(_recon.get("ghost_total_spend", 0))
+    _dsr_total = int(_recon.get("dsr_count_total", 0))
+    _ftts_total = int(_recon.get("ftts_count_total", 0))
+    _overlap = int(_recon.get("overlap_count", 0))
+
+    st.markdown(note(
+        f"<b>Cross-database product universe analysis.</b> "
+        f"DSR (Sales) tracks <b>{_dsr_total}</b> products with sales activity. "
+        f"FTTS (Promo) tracks <b>{_ftts_total}</b> products receiving promo budget. "
+        f"<b>Gap = {_ghost_count} 'ghost products'</b> — receiving promo budget but generating ZERO sales. "
+        f"Total promo spend on ghosts: <b>{fmt(_ghost_spend)}</b>. "
+        f"This may include discontinued products, mis-categorized items, or pre-launch budgets."
+    ), unsafe_allow_html=True)
+
+    rec1, rec2, rec3, rec4 = st.columns(4)
+    rec1.markdown(kpi("DSR — Products with Sales", str(_dsr_total),
+                      "Active commercial products"), unsafe_allow_html=True)
+    rec2.markdown(kpi("FTTS — Products with Promo", str(_ftts_total),
+                      "Total promotional reach"), unsafe_allow_html=True)
+    rec3.markdown(kpi("In BOTH (ROI Universe)", str(_overlap),
+                      "What ROI calculations use"), unsafe_allow_html=True)
+    rec4.markdown(kpi("🚨 Ghost Products", str(_ghost_count),
+                      f"Promo spend, NO sales — {fmt(_ghost_spend)} wasted",
+                      red=(_ghost_count > 20)), unsafe_allow_html=True)
+
+    # Show the actual ghost products so supervisor can investigate specific ones
+    if len(_ghost_df) > 0:
+        with st.expander(f"📋 List the {_ghost_count} Ghost Products — Promo Spend with No DSR Sales"):
+            disp_ghost = _ghost_df.copy()
+            disp_ghost["Promo Spend"] = disp_ghost["PromoSpend"].apply(fmt)
+            disp_ghost = disp_ghost[["Product", "Promo Spend", "ActivityCount"]]
+            disp_ghost.columns = ["Product (in FTTS)", "Promo Spent", "# Activities"]
+            st.dataframe(disp_ghost, use_container_width=True, hide_index=True,
+                         height=min(500, len(disp_ghost)*32 + 50))
+            top_ghost_spend = float(_ghost_df.head(10)["PromoSpend"].sum())
+            st.caption(f"💡 Top 10 ghost products alone consumed PKR {top_ghost_spend/1e6:.1f}M in promo. "
+                       f"Audit these first: they may be discontinued, mis-categorized in promo, or pre-launch products.")
+
+    # Side-by-Side comparison: DSR vs FTTS counts per FY
+    fy_recon_data = []
+    for fy in _all_fys[-3:] if len(_all_fys) >= 3 else _all_fys:
+        if fy is None: continue
+        dsr_n = (df_sales[(df_sales["FiscalYear"]==fy) &
+                          (df_sales["SaleFlag"].isin(["S","R"]) if "SaleFlag" in df_sales.columns else True)]
+                 ["ProductName"].astype(str).str.strip().str.upper().nunique())
+        ftts_n = (df_act[(df_act["FiscalYear"]==fy) & (df_act["TotalAmount"]>0)]
+                  ["Product"].astype(str).str.strip().str.upper().nunique())
+        fy_recon_data.append({"FY": fy, "DSR (Sales)": dsr_n, "FTTS (Promo)": ftts_n,
+                              "Gap": ftts_n - dsr_n})
+
+    if fy_recon_data:
+        fy_recon_df = pd.DataFrame(fy_recon_data)
+        col_r1, col_r2 = st.columns([2,1])
+        with col_r1:
+            fig_recon = go.Figure()
+            fig_recon.add_trace(go.Bar(x=fy_recon_df["FY"], y=fy_recon_df["DSR (Sales)"],
+                                        name="DSR (Sales)", marker_color="#1565c0",
+                                        text=fy_recon_df["DSR (Sales)"], textposition="outside"))
+            fig_recon.add_trace(go.Bar(x=fy_recon_df["FY"], y=fy_recon_df["FTTS (Promo)"],
+                                        name="FTTS (Promo)", marker_color="#e65100",
+                                        text=fy_recon_df["FTTS (Promo)"], textposition="outside"))
+            apply_layout(fig_recon, height=320, barmode="group",
+                         xaxis=dict(gridcolor="#eee", title="Fiscal Year"),
+                         yaxis=dict(gridcolor="#eee", title="# Products"))
+            fig_recon.update_layout(title="Products with Sales (DSR) vs Promo (FTTS) by FY")
+            st.plotly_chart(fig_recon, use_container_width=True)
+        with col_r2:
+            disp_recon = fy_recon_df.copy()
+            disp_recon["Gap"] = disp_recon["Gap"].apply(lambda v: f"+{v}" if v>0 else str(v))
+            st.dataframe(disp_recon, use_container_width=True, hide_index=True)
+            st.caption("Gap = products with promo but no sales for that FY. Persistent positive gap = systematic overreach.")
+
+    st.markdown("---")
+
     st.markdown(sec(f"Product {metric_toggle}: Last 3 Fiscal Years — Side by Side"), unsafe_allow_html=True)
     st.markdown(note(
         f"Comparing {', '.join([fy_label[fy] for fy in last_3_fys])}. "
@@ -714,6 +866,7 @@ if page == "📈 Sales Analysis":
         if total_products >= 5:
             n_prods_s = st.slider(f"Number of products (Total: {total_products})",
                                   5, total_products, min(50, total_products), key="sales_n")
+            st.caption(f"ℹ️ Counting DSR products with sales activity. Different from FTTS (Promo) and ZSDCY (SKUs) — see Reconciliation above.")
         else:
             n_prods_s = total_products
             st.caption(f"Total products available: {total_products}")
@@ -826,6 +979,7 @@ if page == "📈 Sales Analysis":
 
             n_grow = st.slider(f"Number of products to show (Total: {total_in_scope})",
                                5, total_in_scope, min(50, total_in_scope), key="p1_grow_n")
+            st.caption(f"ℹ️ DSR products meeting growth filter ({grow_filter}). Total varies by FY pair and filter mode.")
             display_grow = scope_sorted.head(n_grow).copy()
 
             col_a, col_b = st.columns(2)
@@ -1078,6 +1232,7 @@ elif page == "💰 Promotional Analysis":
             if total_teams >= 5:
                 n_teams = st.slider(f"# Teams (Total: {total_teams})", 5, total_teams,
                                     min(15, total_teams), key="promo_n_teams")
+                st.caption(f"ℹ️ FTTS teams with promo spend in selected FY scope.")
             else:
                 n_teams = max(1, total_teams)
                 st.caption(f"Total teams: {total_teams}")
@@ -1112,6 +1267,7 @@ elif page == "💰 Promotional Analysis":
             if total_prods_p >= 5:
                 n_prods_p = st.slider(f"# Products (Total: {total_prods_p})", 5, total_prods_p,
                                        min(15, total_prods_p), key="promo_n_prods")
+                st.caption(f"ℹ️ FTTS products receiving promo budget. Different from DSR (Sales) — see Page 1 Reconciliation.")
             else:
                 n_prods_p = max(1, total_prods_p)
                 st.caption(f"Total products: {total_prods_p}")
@@ -1482,6 +1638,7 @@ elif page == "✈️ Travel Analysis":
             if total_cities_p3 >= 5:
                 n_c = st.slider(f"# Cities (Total: {total_cities_p3})", 5, total_cities_p3,
                                 min(15, total_cities_p3), key="travel_c_n")
+                st.caption("ℹ️ FTTS Travel destination cities (VisitLocation).")
             else:
                 n_c = total_cities_p3
                 st.caption(f"Total cities: {total_cities_p3}")
@@ -1520,6 +1677,7 @@ elif page == "✈️ Travel Analysis":
             if total_teams_p3 >= 5:
                 n_pt = st.slider(f"# Teams (Total: {total_teams_p3})", 5, total_teams_p3,
                                   min(15, total_teams_p3), key="travel_t_n")
+                st.caption("ℹ️ FTTS Travel teams (TravellerTeam).")
             else:
                 n_pt = total_teams_p3
                 st.caption(f"Total teams: {total_teams_p3}")
@@ -1774,6 +1932,7 @@ elif page == "📦 Distribution Analysis":
                 if total_skus >= 5:
                     n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
                                       min(50, total_skus), key="p4_top_n")
+                    st.caption("ℹ️ ZSDCY tracks SKUs (pack-size variants), not unique products. ~932 SKUs ≈ 200 products × multiple pack sizes.")
                 else:
                     n_top = total_skus
                     st.caption(f"Total SKUs: {total_skus}")
@@ -1807,6 +1966,7 @@ elif page == "📦 Distribution Analysis":
                     if total_skus >= 5:
                         n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
                                           min(50, total_skus), key="p4_top_n_slim")
+                        st.caption("ℹ️ ZSDCY tracks SKUs (pack-size variants), not unique products.")
                     else:
                         n_top = total_skus
                         st.caption(f"Total SKUs: {total_skus}")
@@ -1926,6 +2086,7 @@ elif page == "📦 Distribution Analysis":
                     asc_grow_p4 = (grow_sort_p4 == "Bottom (Slowest)")
                     n_grow_p4 = st.slider(f"# SKUs (Total: {total_z})",
                                           5, total_z, min(50, total_z), key="p4_grow_n")
+                    st.caption("ℹ️ ZSDCY SKU-level growth (pack-size variants). For product-level view, see Page 1.")
                     display_grow_p4 = scope_z.sort_values("GrowthPct", ascending=asc_grow_p4).head(n_grow_p4).copy()
 
                     if len(display_grow_p4) >= 2:
@@ -2023,6 +2184,7 @@ elif page == "📦 Distribution Analysis":
                     asc_grow_slim = (grow_sort_slim == "Bottom (Slowest)")
                     n_grow_slim = st.slider(f"# SKUs (Total: {total_zg})",
                                              5, total_zg, min(50, total_zg), key="p4_grow_n_slim")
+                    st.caption("ℹ️ ZSDCY SKU-level (calendar 2024→2025 fallback). For FY framing, refresh ZSDCY data with Material Name.")
                     display_slim = scope_zg.sort_values("GrowthPct", ascending=asc_grow_slim).head(n_grow_slim).copy()
 
                     if len(display_slim) >= 2:
@@ -5109,190 +5271,16 @@ elif page == "👔 Management View":
 
         st.markdown("---")
 
-        # ── Team Performance Explorer — ALL teams, FY comparison, Revenue/Units toggle ──
-        st.markdown(sec("🏆 Team Performance Explorer — All Teams, FY Comparison"), unsafe_allow_html=True)
-        st.markdown(note(
-            "All teams ranked by revenue or units. Compare FY24-25 to FY25-26 (current). "
-            "Click a team to see its product breakdown and YoY product growth."
-        ), unsafe_allow_html=True)
-
-        # 4-control row: Sort, Metric, FY scope, # to show
-        ts1, ts2, ts3, ts4 = st.columns(4)
-        with ts1:
-            team_sort = st.selectbox("Sort", ["Top (Highest)", "Bottom (Lowest)"], key="nsm_team_sort")
-        with ts2:
-            team_metric = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="nsm_team_metric")
-        with ts3:
-            # FY scope: latest, prior, or both
-            fy_scope_options = ["Both ({} + {})".format(FY_PREV_M or "FY-2", FY_LAST_M or "FY-1")]
-            if FY_LAST_M: fy_scope_options.append(f"{FY_LAST_M} only")
-            if FY_CURR_M: fy_scope_options.append(f"{FY_CURR_M} (current)")
-            if FY_PREV_M: fy_scope_options.append(f"{FY_PREV_M} only")
-            team_fy_scope = st.selectbox("FY Scope", fy_scope_options, key="nsm_team_fy")
-
-        team_metric_col = "TotalUnits" if team_metric == "Units" else "TotalRevenue"
-        team_fmt = (lambda v: fmt_num(v) if team_metric == "Units" else fmt(v))
-
-        # Compute team aggregates per FY
-        team_by_fy = _sales_net_m.groupby(["TeamName","FiscalYear"])[team_metric_col].sum().reset_index() if team_metric_col in _sales_net_m.columns else pd.DataFrame()
-
-        # Pivot to wide format: TeamName | FY24-25 | FY25-26 | Change%
-        if not team_by_fy.empty:
-            team_pivot = team_by_fy.pivot(index="TeamName", columns="FiscalYear", values=team_metric_col).fillna(0).reset_index()
-            # Total across selected FYs for ranking
-            if team_fy_scope.startswith("Both"):
-                fys_for_rank = [fy for fy in [FY_PREV_M, FY_LAST_M, FY_CURR_M] if fy and fy in team_pivot.columns]
-                team_pivot["RankValue"] = team_pivot[fys_for_rank].sum(axis=1)
-                fys_to_chart = fys_for_rank
-            elif "current" in team_fy_scope.lower():
-                team_pivot["RankValue"] = team_pivot[FY_CURR_M] if FY_CURR_M in team_pivot.columns else 0
-                fys_to_chart = [FY_CURR_M] if FY_CURR_M else []
-            elif FY_LAST_M and FY_LAST_M in team_fy_scope:
-                team_pivot["RankValue"] = team_pivot[FY_LAST_M] if FY_LAST_M in team_pivot.columns else 0
-                fys_to_chart = [FY_LAST_M]
-            elif FY_PREV_M and FY_PREV_M in team_fy_scope:
-                team_pivot["RankValue"] = team_pivot[FY_PREV_M] if FY_PREV_M in team_pivot.columns else 0
-                fys_to_chart = [FY_PREV_M]
-            else:
-                fys_to_chart = list(team_pivot.columns[1:-1])
-                team_pivot["RankValue"] = team_pivot[fys_to_chart].sum(axis=1)
-
-            team_pivot = team_pivot[team_pivot["RankValue"] > 0]
-            total_teams = len(team_pivot)
-
-            with ts4:
-                if total_teams >= 5:
-                    n_teams_show = st.slider(f"# Teams (Total: {total_teams})",
-                                             5, total_teams, min(15, total_teams), key="nsm_team_n")
-                else:
-                    n_teams_show = total_teams
-                    st.caption(f"Total: {total_teams}")
-
-            asc_team = (team_sort == "Bottom (Lowest)")
-            team_pivot_show = team_pivot.sort_values("RankValue", ascending=asc_team).head(n_teams_show).copy()
-
-            # ── Side-by-side bar chart: one bar per FY per team ──
-            chart_data = []
-            for _, row in team_pivot_show.iterrows():
-                for fy in fys_to_chart:
-                    if fy and fy in team_pivot_show.columns:
-                        chart_data.append({"Team": row["TeamName"], "FY": fy, "Value": row[fy]})
-            chart_df = pd.DataFrame(chart_data)
-
-            if not chart_df.empty:
-                # Color: previous FY = gray, last = blue, current/partial = orange
-                fy_color_map = {}
-                for fy in fys_to_chart:
-                    if fy == FY_PREV_M: fy_color_map[fy] = "#9aa5b1"
-                    elif fy == FY_LAST_M: fy_color_map[fy] = "#2c5f8a"
-                    elif fy == FY_CURR_M: fy_color_map[fy] = "#e65100"
-                    else: fy_color_map[fy] = "#7b1fa2"
-
-                chart_df["Label"] = chart_df["Value"].apply(team_fmt)
-                fig_team = px.bar(chart_df, x="Value", y="Team", color="FY", orientation="h",
-                                   barmode="group", text="Label",
-                                   color_discrete_map=fy_color_map,
-                                   category_orders={"FY": fys_to_chart})
-                fig_team.update_traces(textposition="outside", textfont_size=9)
-                fig_team.update_yaxes(autorange="reversed")
-                apply_layout(fig_team, height=max(450, n_teams_show*44),
-                             yaxis=dict(gridcolor="#eeeeee"),
-                             xaxis=dict(gridcolor="#eeeeee", title=team_metric))
-                fig_team.update_layout(title=f"{'Bottom' if asc_team else 'Top'} {n_teams_show} Teams — {team_metric}")
-                st.plotly_chart(fig_team, use_container_width=True)
-
-            # ── Detail table with YoY change ──
-            with st.expander(f"📋 Detail Table — All {total_teams} Teams (with YoY change)"):
-                disp_team = team_pivot.sort_values("RankValue", ascending=asc_team).copy()
-                # Format FY columns
-                for fy in fys_to_chart:
-                    if fy in disp_team.columns:
-                        disp_team[fy] = disp_team[fy].apply(team_fmt)
-                # Compute YoY % FY24-25 → FY25-26 if both exist
-                if FY_LAST_M and FY_CURR_M and FY_LAST_M in team_pivot.columns and FY_CURR_M in team_pivot.columns:
-                    yoy_calc = []
-                    for _, row in team_pivot.iterrows():
-                        prev = row[FY_LAST_M] if FY_LAST_M in row.index else 0
-                        curr = row[FY_CURR_M] if FY_CURR_M in row.index else 0
-                        if prev > 0 and curr > 0:
-                            yoy_calc.append(f"{((curr/prev - 1)*100):+.0f}%")
-                        elif curr > 0:
-                            yoy_calc.append("🆕 NEW")
-                        else:
-                            yoy_calc.append("—")
-                    disp_team["YoY"] = pd.Series(yoy_calc, index=team_pivot.index)
-                disp_team = disp_team.drop(columns=["RankValue"], errors="ignore")
-                st.dataframe(disp_team, use_container_width=True, hide_index=True, height=min(400, len(disp_team)*32+50))
-
-            # ── Per-team product breakdown drill-down ──
-            st.markdown(sec("🔬 Drill Down: Which Products Does Each Team Sell?"), unsafe_allow_html=True)
-            team_drill = st.selectbox("Pick a team to see its product mix and YoY growth:",
-                                       options=team_pivot.sort_values("RankValue", ascending=False)["TeamName"].tolist(),
-                                       key="nsm_team_drill")
-
-            if team_drill:
-                # Get this team's products across the FYs being shown
-                team_data = _sales_net_m[_sales_net_m["TeamName"] == team_drill]
-                if not team_data.empty:
-                    # Per-product per-FY for this team
-                    team_prod_fy = team_data.groupby(["ProductName","FiscalYear"])[team_metric_col].sum().reset_index()
-                    team_prod_pivot = team_prod_fy.pivot(index="ProductName", columns="FiscalYear", values=team_metric_col).fillna(0).reset_index()
-
-                    # Sort by latest FY revenue
-                    sort_fy = FY_CURR_M if FY_CURR_M and FY_CURR_M in team_prod_pivot.columns else FY_LAST_M
-                    if sort_fy and sort_fy in team_prod_pivot.columns:
-                        team_prod_pivot = team_prod_pivot.sort_values(sort_fy, ascending=False)
-
-                    # Top 15 products for this team
-                    top15_team_prods = team_prod_pivot.head(15).copy()
-
-                    # Build chart
-                    chart_team_prod = []
-                    for _, row in top15_team_prods.iterrows():
-                        for fy in fys_to_chart:
-                            if fy and fy in top15_team_prods.columns:
-                                chart_team_prod.append({"Product": row["ProductName"], "FY": fy, "Value": row[fy]})
-                    chart_tp_df = pd.DataFrame(chart_team_prod)
-
-                    if not chart_tp_df.empty:
-                        chart_tp_df["Label"] = chart_tp_df["Value"].apply(team_fmt)
-                        fig_tp = px.bar(chart_tp_df, x="Value", y="Product", color="FY", orientation="h",
-                                        barmode="group", text="Label",
-                                        color_discrete_map=fy_color_map,
-                                        category_orders={"FY": fys_to_chart})
-                        fig_tp.update_traces(textposition="outside", textfont_size=9)
-                        fig_tp.update_yaxes(autorange="reversed")
-                        apply_layout(fig_tp, height=max(450, len(top15_team_prods)*36),
-                                     yaxis=dict(gridcolor="#eeeeee"),
-                                     xaxis=dict(gridcolor="#eeeeee", title=team_metric))
-                        fig_tp.update_layout(title=f"Top 15 Products by {team_drill} — {team_metric}")
-                        st.plotly_chart(fig_tp, use_container_width=True)
-
-                    # YoY product growth table
-                    with st.expander(f"📋 {team_drill}: All Products with YoY Growth"):
-                        if FY_LAST_M and FY_CURR_M and FY_LAST_M in team_prod_pivot.columns and FY_CURR_M in team_prod_pivot.columns:
-                            disp_tp = team_prod_pivot.copy()
-                            yoy_p = []
-                            for _, row in disp_tp.iterrows():
-                                prev = row[FY_LAST_M] if FY_LAST_M in row.index else 0
-                                curr = row[FY_CURR_M] if FY_CURR_M in row.index else 0
-                                if prev > 0 and curr > 0:
-                                    g = (curr/prev - 1) * 100
-                                    if g >= 100: yoy_p.append(f"{(g/100)+1:.1f}x")
-                                    else: yoy_p.append(f"{g:+.0f}%")
-                                elif curr > 0:
-                                    yoy_p.append("🆕 NEW")
-                                else:
-                                    yoy_p.append("—")
-                            disp_tp["YoY Growth"] = yoy_p
-                            for fy in fys_to_chart:
-                                if fy in disp_tp.columns:
-                                    disp_tp[fy] = disp_tp[fy].apply(team_fmt)
-                            st.dataframe(disp_tp, use_container_width=True, hide_index=True, height=400)
-                        else:
-                            st.info("YoY growth requires both FY24-25 and FY25-26 data.")
+        # ── Top 10 Teams — single table ──
+        st.markdown(sec("🏆 Top 10 Teams by Revenue — {}".format(FY_LAST_M or "Latest FY")), unsafe_allow_html=True)
+        if FY_LAST_M:
+            team_df = _sales_net_m[_sales_net_m["FiscalYear"]==FY_LAST_M].groupby("TeamName").agg(
+                Revenue=("TotalRevenue","sum")).reset_index().nlargest(10, "Revenue")
+            team_df["Rank"] = range(1, len(team_df)+1)
+            team_df["Revenue"] = team_df["Revenue"].apply(fmt)
+            st.dataframe(team_df[["Rank","TeamName","Revenue"]], use_container_width=True, hide_index=True)
         else:
-            st.info("Need fiscal-year team data to render this section.")
+            st.info("Need complete FY data to rank teams.")
 
         st.markdown("---")
 
@@ -5336,571 +5324,285 @@ elif page == "👔 Management View":
 
         st.markdown("---")
 
-        # ════════════════════════════════════════════════════════════
-        # SECTION 1: ROI EXPLORER — All Products + 4 Formulas + FY Comparison
-        # ════════════════════════════════════════════════════════════
-        st.markdown(sec("💎 ROI Explorer — All Products with 4 Formulas + FY Comparison"), unsafe_allow_html=True)
+        # ── Top 10 Products by ROI ──
+        st.markdown(sec("💎 Where Your Best Returns Are — Top 10 Products by ROI"), unsafe_allow_html=True)
         st.markdown(note(
-            "Pick which ROI formula to rank by. Filter top/bottom, switch Revenue/Units, choose fiscal year scope. "
-            "F1 = Gross÷Promo (simple), F2 = Net÷Promo (after returns/discounts), F3 = Net÷(Promo+Travel) ⭐ recommended, F4 = Profit per PKR promo."
+            f"Gold bar = <b>{top_roi_name_m}</b> at {top_roi_val_m:.1f}x — your highest-return product. "
+            "Green bars above 30x are also strong. These are candidates for more budget, not less."
         ), unsafe_allow_html=True)
 
-        # Build the 4-formula ROI table per FY (so FY filter works)
-        @st.cache_data(ttl=3600)
-        def _build_roi4_per_fy():
-            """Compute all 4 ROI formulas per (Product × FiscalYear) for live FY filtering."""
-            sales_S  = df_sales[df_sales["SaleFlag"]=="S"] if "SaleFlag" in df_sales.columns else df_sales
-            sales_R  = df_sales[df_sales["SaleFlag"]=="R"] if "SaleFlag" in df_sales.columns else df_sales.head(0)
-
-            # Per-FY aggregations
-            gross = sales_S.groupby(["ProductName","FiscalYear"]).agg(
-                GrossRev=("TotalRevenue","sum"),
-                GrossUnits=("TotalUnits","sum") if "TotalUnits" in sales_S.columns else ("TotalRevenue","count"),
-                Discount=("TotalDiscount","sum") if "TotalDiscount" in sales_S.columns else ("TotalRevenue","count")
-            ).reset_index()
-            if "TotalDiscount" not in sales_S.columns:
-                gross["Discount"] = 0
-            if "TotalUnits" not in sales_S.columns:
-                gross["GrossUnits"] = 0
-
-            returns = sales_R.groupby(["ProductName","FiscalYear"])["TotalRevenue"].sum().reset_index()
-            returns.columns = ["ProductName","FiscalYear","ReturnsRev"]
-
-            r4 = gross.merge(returns, on=["ProductName","FiscalYear"], how="left").fillna(0)
-            r4["NetRealizedRev"] = r4["GrossRev"] + r4["ReturnsRev"] - r4["Discount"]
-
-            # Promo per (Product × FY)
-            promo = df_act.groupby(["Product","FiscalYear"])["TotalAmount"].sum().reset_index()
-            promo.columns = ["ProductName","FiscalYear","PromoSpend"]
-            r4 = r4.merge(promo, on=["ProductName","FiscalYear"], how="left").fillna(0)
-
-            # Travel allocation (use total trips × 25k, allocated by promo share within each FY)
-            if "FiscalYear" in df_travel.columns:
-                travel_per_fy = df_travel.groupby("FiscalYear").size().reset_index(name="Trips")
-                travel_per_fy["TotalTravelCost"] = travel_per_fy["Trips"] * 25000
-                r4 = r4.merge(travel_per_fy[["FiscalYear","TotalTravelCost"]], on="FiscalYear", how="left").fillna(0)
-                # Sum promo per FY for proportional allocation
-                fy_promo_total = r4.groupby("FiscalYear")["PromoSpend"].sum().to_dict()
-                r4["FYPromoTotal"] = r4["FiscalYear"].map(fy_promo_total)
-                r4["TravelAlloc"] = r4.apply(
-                    lambda r: (r["PromoSpend"]/r["FYPromoTotal"]) * r["TotalTravelCost"] if r["FYPromoTotal"]>0 else 0,
-                    axis=1
-                )
-            else:
-                r4["TravelAlloc"] = 0
-
-            # Filter — meaningful spend & revenue
-            r4 = r4[(r4["PromoSpend"] > 1e6) & (r4["GrossRev"] > 10e6)].copy()
-
-            # 4 formulas
-            r4["F1_Current"]  = (r4["GrossRev"] / r4["PromoSpend"])
-            r4["F2_Net"]      = (r4["NetRealizedRev"] / r4["PromoSpend"])
-            r4["F3_FullGTM"]  = (r4["NetRealizedRev"] / (r4["PromoSpend"]+r4["TravelAlloc"]).replace(0, np.nan))
-            r4["F4_Payoff"]   = ((r4["NetRealizedRev"]-r4["PromoSpend"]-r4["TravelAlloc"]) / r4["PromoSpend"])
-            r4 = r4.fillna(0)
-            return r4
-
-        try:
-            roi4_fy = _build_roi4_per_fy()
-        except Exception as _e:
-            roi4_fy = pd.DataFrame()
-            st.warning(f"ROI computation failed: {_e}")
-
-        if not roi4_fy.empty:
-            # Filter row 1: Sort + Formula + FY scope + #
-            r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-            with r1c1:
-                roi_sort = st.selectbox("Sort", ["Top (Highest ROI)", "Bottom (Lowest ROI)"], key="cmo_roi_sort")
-            with r1c2:
-                roi_formula = st.selectbox("ROI Formula",
-                                            ["F3 — Full GTM (recommended)",
-                                             "F1 — Current (Gross ÷ Promo)",
-                                             "F2 — Net Realized ÷ Promo",
-                                             "F4 — Payoff Multiple"],
-                                            index=0, key="cmo_roi_formula")
-            with r1c3:
-                roi_fy_options = ["Both (FY-1 + Current)"]
-                if FY_LAST_M: roi_fy_options.append(f"{FY_LAST_M} only")
-                if FY_CURR_M: roi_fy_options.append(f"{FY_CURR_M} (current)")
-                if FY_PREV_M: roi_fy_options.append(f"{FY_PREV_M} only")
-                roi_fy_scope = st.selectbox("FY Scope", roi_fy_options, key="cmo_roi_fy_scope")
-
-            # Map formula label to column
-            formula_col_map = {
-                "F1 — Current (Gross ÷ Promo)": "F1_Current",
-                "F2 — Net Realized ÷ Promo": "F2_Net",
-                "F3 — Full GTM (recommended)": "F3_FullGTM",
-                "F4 — Payoff Multiple": "F4_Payoff",
-            }
-            roi_col = formula_col_map[roi_formula]
-
-            # Determine which FYs to include
-            if roi_fy_scope.startswith("Both"):
-                fys_to_use_roi = [fy for fy in [FY_LAST_M, FY_CURR_M] if fy]
-            elif "current" in roi_fy_scope.lower():
-                fys_to_use_roi = [FY_CURR_M] if FY_CURR_M else []
-            elif FY_LAST_M and FY_LAST_M in roi_fy_scope:
-                fys_to_use_roi = [FY_LAST_M]
-            elif FY_PREV_M and FY_PREV_M in roi_fy_scope:
-                fys_to_use_roi = [FY_PREV_M]
-            else:
-                fys_to_use_roi = [fy for fy in [FY_PREV_M, FY_LAST_M, FY_CURR_M] if fy]
-
-            # Filter ROI table to selected FYs
-            roi_filtered = roi4_fy[roi4_fy["FiscalYear"].isin(fys_to_use_roi)].copy() if fys_to_use_roi else roi4_fy.copy()
-
-            # Compute weighted ROI (combined revenue / combined spend) across selected FYs for ranking
-            agg_roi = roi_filtered.groupby("ProductName").agg(
-                GrossRev=("GrossRev","sum"),
-                NetRealizedRev=("NetRealizedRev","sum"),
-                PromoSpend=("PromoSpend","sum"),
-                TravelAlloc=("TravelAlloc","sum"),
-                GrossUnits=("GrossUnits","sum")
-            ).reset_index()
-            agg_roi = agg_roi[agg_roi["PromoSpend"] > 1e6]   # safety
-            agg_roi["F1_Current"]  = agg_roi["GrossRev"] / agg_roi["PromoSpend"]
-            agg_roi["F2_Net"]      = agg_roi["NetRealizedRev"] / agg_roi["PromoSpend"]
-            agg_roi["F3_FullGTM"]  = agg_roi["NetRealizedRev"] / (agg_roi["PromoSpend"]+agg_roi["TravelAlloc"]).replace(0, np.nan)
-            agg_roi["F4_Payoff"]   = (agg_roi["NetRealizedRev"]-agg_roi["PromoSpend"]-agg_roi["TravelAlloc"]) / agg_roi["PromoSpend"]
-            agg_roi = agg_roi.fillna(0).replace([np.inf, -np.inf], 0)
-
-            total_roi_prods = len(agg_roi)
-            with r1c4:
-                if total_roi_prods >= 5:
-                    n_roi_show = st.slider(f"# Products (Total: {total_roi_prods})",
-                                            5, total_roi_prods, min(50, total_roi_prods),
-                                            key="cmo_roi_n")
-                else:
-                    n_roi_show = total_roi_prods
-                    st.caption(f"Total: {total_roi_prods}")
-
-            asc_roi_cmo = (roi_sort == "Bottom (Lowest ROI)")
-            agg_roi_show = agg_roi.sort_values(roi_col, ascending=asc_roi_cmo).head(n_roi_show).copy()
-
-            # Build chart
-            agg_roi_show["Label"] = agg_roi_show.apply(
-                lambda r: f"{r[roi_col]:.1f}x | Rev {fmt(r['GrossRev'])} | Promo {fmt(r['PromoSpend'])}",
-                axis=1
-            )
-            colors_roi_cmo = ["#FFD700" if i==0 and not asc_roi_cmo else "#2e7d32" if r > 30 else "#1565c0" if r > 10 else "#fb8c00" if r > 0 else "#c62828"
-                              for i, r in enumerate(agg_roi_show[roi_col])]
-            fig_roi_cmo = go.Figure(go.Bar(
-                x=agg_roi_show[roi_col], y=agg_roi_show["ProductName"], orientation="h",
-                text=agg_roi_show["Label"], textposition="outside", textfont_size=9,
-                marker_color=colors_roi_cmo))
-            apply_layout(fig_roi_cmo, height=max(450, n_roi_show*22),
-                         yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                         xaxis=dict(gridcolor="#eee", title=f"{roi_formula.split(' — ')[0]} ROI"))
-            fig_roi_cmo.update_layout(title=f"{'Bottom' if asc_roi_cmo else 'Top'} {n_roi_show} Products by {roi_formula.split(' — ')[0]} — {roi_fy_scope}")
-            st.plotly_chart(fig_roi_cmo, use_container_width=True)
-
-            # YoY ROI comparison if both FYs selected
-            if roi_fy_scope.startswith("Both") and FY_LAST_M and FY_CURR_M:
-                with st.expander("📊 ROI YoY: FY24-25 vs FY25-26 — All 4 Formulas Side-by-Side"):
-                    pivot_yoy = roi4_fy.pivot_table(index="ProductName", columns="FiscalYear",
-                                                      values=roi_col, aggfunc="mean").fillna(0).reset_index()
-                    if FY_LAST_M in pivot_yoy.columns and FY_CURR_M in pivot_yoy.columns:
-                        pivot_yoy["Δ ROI"] = pivot_yoy[FY_CURR_M] - pivot_yoy[FY_LAST_M]
-                        pivot_yoy = pivot_yoy.sort_values(FY_LAST_M, ascending=False).head(30)
-                        for c in [FY_LAST_M, FY_CURR_M, "Δ ROI"]:
-                            if c in pivot_yoy.columns:
-                                pivot_yoy[c] = pivot_yoy[c].apply(lambda v: f"{v:+.1f}x" if c == "Δ ROI" else f"{v:.1f}x")
-                        st.dataframe(pivot_yoy, use_container_width=True, hide_index=True)
-                    else:
-                        st.info(f"Both FYs ({FY_LAST_M} and {FY_CURR_M}) need ROI data.")
+        top10_roi_df = _roi_m.head(10).reset_index()
+        # After groupby-join reset_index the column may be named 'index' — normalize to 'ProductName'
+        if "ProductName" not in top10_roi_df.columns:
+            top10_roi_df = top10_roi_df.rename(columns={top10_roi_df.columns[0]: "ProductName"})
+        colors_roi_m = ["#FFD700" if i == 0 else "#2e7d32" if r > 30 else "#2c5f8a"
+                        for i, r in enumerate(top10_roi_df["ROI"])]
+        fig = go.Figure(go.Bar(
+            x=top10_roi_df["ROI"], y=top10_roi_df["ProductName"], orientation="h",
+            text=[f"{r:.1f}x | Rev {fmt(rv)} | Spend {fmt(sp)}"
+                  for r, rv, sp in zip(top10_roi_df["ROI"], top10_roi_df["Revenue"], top10_roi_df["Spend"])],
+            textposition="outside", textfont_size=10, marker_color=colors_roi_m))
+        apply_layout(fig, height=400, yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                     xaxis=dict(gridcolor="#eee", title="ROI (Revenue ÷ Promo Spend)"))
+        st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
 
-        # ════════════════════════════════════════════════════════════
-        # SECTION 2: PROMO TIMING — by FY (FY24-25 + FY25-26 explicitly)
-        # ════════════════════════════════════════════════════════════
-        st.markdown(sec("⏰ Are We Spending in the Right Months? — FY24-25 vs FY25-26"), unsafe_allow_html=True)
+        # ── Promo Timing — are we spending when sales peak? ──
+        st.markdown(sec("⏰ Are We Spending in the Right Months?"), unsafe_allow_html=True)
+
+        pm_m2 = df_act.groupby("Mo")["TotalAmount"].sum()
+        sm_m2 = _sales_net_m.groupby("Mo")["TotalRevenue"].sum()
+        pr_m2 = pm_m2.rank(ascending=False)
+        sr_m2 = sm_m2.rank(ascending=False)
+
+        fiscal_order_m = [7,8,9,10,11,12,1,2,3,4,5,6]
+        tdf_m = pd.DataFrame({
+            "Month": [months_map[m] for m in fiscal_order_m],
+            "Promo Rank": [int(pr_m2.get(m,0)) for m in fiscal_order_m],
+            "Sales Rank": [int(sr_m2.get(m,0)) for m in fiscal_order_m],
+        })
+        tdf_m["Gap"] = (tdf_m["Promo Rank"] - tdf_m["Sales Rank"]).abs()
+        def _status_m(row):
+            if row["Gap"] <= 2: return "✅ Aligned"
+            if row["Promo Rank"] < row["Sales Rank"]: return f"🔴 Over-spent"
+            return f"🟡 Under-spent"
+        tdf_m["Status"] = tdf_m.apply(_status_m, axis=1)
+
+        # Live insight
+        over_m  = tdf_m[(tdf_m["Gap"] >= 4) & (tdf_m["Promo Rank"] < tdf_m["Sales Rank"])].head(2)
+        under_m = tdf_m[(tdf_m["Gap"] >= 4) & (tdf_m["Sales Rank"] < tdf_m["Promo Rank"])].head(2)
+        if len(over_m) > 0 and len(under_m) > 0:
+            st.markdown(note(
+                f"Spending too much in: <b>{', '.join(over_m['Month'].tolist())}</b>. "
+                f"Under-spending in: <b>{', '.join(under_m['Month'].tolist())}</b>. "
+                "Move budget from over-spent months to under-spent months — zero extra cost."
+            ), unsafe_allow_html=True)
+
+        col1, col2 = st.columns([2,1])
+        with col1:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=tdf_m["Month"], y=tdf_m["Promo Rank"],
+                name="Promo Rank", mode="lines+markers",
+                line=dict(color="#e65100", width=2.5), marker=dict(size=8)))
+            fig.add_trace(go.Scatter(x=tdf_m["Month"], y=tdf_m["Sales Rank"],
+                name="Sales Rank", mode="lines+markers",
+                line=dict(color="#2c5f8a", width=2.5), marker=dict(size=8)))
+            apply_layout(fig, height=340,
+                yaxis=dict(autorange="reversed", title="Rank (1=highest)", gridcolor="#eee"),
+                xaxis=dict(gridcolor="#eee", title="Fiscal Month (Jul→Jun)"),
+                hovermode="x unified")
+            fig.update_layout(title="Promo Spend Rank vs Sales Rank — Where the gap is, move the budget")
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.dataframe(tdf_m, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # ── PRESERVED: Activity Drill-Down (the valuable SQL-live insight) ──
+        st.markdown(sec("🔍 What Activities Drove Each Top-ROI Product?"), unsafe_allow_html=True)
         st.markdown(note(
-            f"For each fiscal month (Jul→Jun), how does Promo Spend rank vs Sales Revenue rank? Gap means misalignment. "
-            f"Compare {FY_LAST_M or 'last FY'} (complete) vs {FY_CURR_M or 'current FY'} (partial) to see if alignment is improving."
+            "Pick a product to see exactly which activities generated its returns — doctor sessions, screenings, equipment donations. "
+            "Data live from FTTS (vw_AllRequestsDetails when available, activities CSV otherwise)."
         ), unsafe_allow_html=True)
 
-        timing_fy_pick = st.radio("Show Fiscal Year",
-                                    [f"{FY_LAST_M} ({'complete' if FY_LAST_M else ''})",
-                                     f"{FY_CURR_M} ({'partial' if FY_CURR_M else ''})",
-                                     "Both Side by Side"],
-                                    index=2, horizontal=True, key="cmo_timing_fy")
+        drill_options = top10_roi_df["ProductName"].tolist()
+        drill_prod = st.selectbox(
+            "Select product:",
+            options=drill_options,
+            index=0,
+            key="mgmt_mkt_drill"
+        )
 
-        def _build_rank_table(target_fy):
-            """Compute Promo Rank vs Sales Rank table for a given FY."""
-            if not target_fy or "FiscalYear" not in df_act.columns:
-                return pd.DataFrame()
-            pm = df_act[df_act["FiscalYear"]==target_fy].groupby("Mo")["TotalAmount"].sum()
-            sm = _sales_net_m[_sales_net_m["FiscalYear"]==target_fy].groupby("Mo")["TotalRevenue"].sum()
-            if pm.empty or sm.empty:
-                return pd.DataFrame()
-            pr = pm.rank(ascending=False)
-            sr = sm.rank(ascending=False)
-            fiscal_order = [7,8,9,10,11,12,1,2,3,4,5,6]
-            tdf = pd.DataFrame({
-                "Month": [months_map[m] for m in fiscal_order],
-                "Mo_int": fiscal_order,
-                "Promo Rank": [int(pr.get(m, 0)) if not pd.isna(pr.get(m, 0)) else 0 for m in fiscal_order],
-                "Sales Rank": [int(sr.get(m, 0)) if not pd.isna(sr.get(m, 0)) else 0 for m in fiscal_order],
-                "Promo PKR":  [pm.get(m, 0) for m in fiscal_order],
-                "Sales PKR":  [sm.get(m, 0) for m in fiscal_order],
-            })
-            tdf["Gap"] = (tdf["Promo Rank"] - tdf["Sales Rank"]).abs()
-            def _status(row):
-                if row["Promo Rank"] == 0: return "—"
-                if row["Gap"] <= 2: return "✅ Aligned"
-                if row["Promo Rank"] < row["Sales Rank"]: return "🔴 Over-spent"
-                return "🟡 Under-spent"
-            tdf["Status"] = tdf.apply(_status, axis=1)
-            return tdf
-
-        if "Both" in timing_fy_pick:
-            colt1, colt2 = st.columns(2)
-            for i, fy in enumerate([FY_LAST_M, FY_CURR_M]):
-                col = colt1 if i == 0 else colt2
-                with col:
-                    st.markdown(f"**{fy or '—'}**")
-                    tdf_fy = _build_rank_table(fy)
-                    if not tdf_fy.empty:
-                        fig_t = go.Figure()
-                        fig_t.add_trace(go.Scatter(x=tdf_fy["Month"], y=tdf_fy["Promo Rank"],
-                            name="Promo Rank", mode="lines+markers",
-                            line=dict(color="#e65100", width=2.5), marker=dict(size=8)))
-                        fig_t.add_trace(go.Scatter(x=tdf_fy["Month"], y=tdf_fy["Sales Rank"],
-                            name="Sales Rank", mode="lines+markers",
-                            line=dict(color="#2c5f8a", width=2.5), marker=dict(size=8)))
-                        apply_layout(fig_t, height=300,
-                            yaxis=dict(autorange="reversed", title="Rank (1=highest)", gridcolor="#eee"),
-                            xaxis=dict(gridcolor="#eee", title="Fiscal Month"),
-                            hovermode="x unified")
-                        st.plotly_chart(fig_t, use_container_width=True)
-                        st.dataframe(tdf_fy[["Month","Promo Rank","Sales Rank","Status"]],
-                                       use_container_width=True, hide_index=True, height=240)
-                    else:
-                        st.info(f"No timing data for {fy}.")
+        prod_row = top10_roi_df[top10_roi_df["ProductName"]==drill_prod]
+        if len(prod_row):
+            prod_roi_val = prod_row["ROI"].values[0]
+            prod_rev_val = prod_row["Revenue"].values[0]
+            prod_sp_val  = prod_row["Spend"].values[0]
         else:
-            target_fy_t = FY_LAST_M if FY_LAST_M and FY_LAST_M in timing_fy_pick else FY_CURR_M
-            tdf_fy = _build_rank_table(target_fy_t)
-            if not tdf_fy.empty:
-                col1, col2 = st.columns([2,1])
-                with col1:
-                    fig_t = go.Figure()
-                    fig_t.add_trace(go.Scatter(x=tdf_fy["Month"], y=tdf_fy["Promo Rank"],
-                        name="Promo Rank", mode="lines+markers",
-                        line=dict(color="#e65100", width=2.5), marker=dict(size=8)))
-                    fig_t.add_trace(go.Scatter(x=tdf_fy["Month"], y=tdf_fy["Sales Rank"],
-                        name="Sales Rank", mode="lines+markers",
-                        line=dict(color="#2c5f8a", width=2.5), marker=dict(size=8)))
-                    apply_layout(fig_t, height=340,
-                        yaxis=dict(autorange="reversed", title="Rank (1=highest)", gridcolor="#eee"),
-                        xaxis=dict(gridcolor="#eee", title="Fiscal Month (Jul→Jun)"),
-                        hovermode="x unified")
-                    fig_t.update_layout(title=f"Promo vs Sales Rank — {target_fy_t}")
-                    st.plotly_chart(fig_t, use_container_width=True)
-                with col2:
-                    st.dataframe(tdf_fy[["Month","Promo Rank","Sales Rank","Status"]],
-                                   use_container_width=True, hide_index=True)
+            prod_roi_val = prod_rev_val = prod_sp_val = 0
+
+        ck1, ck2, ck3 = st.columns(3)
+        ck1.markdown(kpi(drill_prod, f"{prod_roi_val:.1f}x ROI", "Live computed"), unsafe_allow_html=True)
+        ck2.markdown(kpi("Revenue", fmt(prod_rev_val), "Gross sales"), unsafe_allow_html=True)
+        ck3.markdown(kpi("Promo Spend", fmt(prod_sp_val), "Activities DB"), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Try live SQL first, fallback to CSV (preserves existing functionality)
+        try:
+            ftts_conn = get_ftts_connection() if "get_ftts_connection" in dir() else None
+            if ftts_conn:
+                detail_df = pd.read_sql(f"""
+                    SELECT TOP 50
+                        ISNULL(RequestorTeams, 'Unknown')   AS Team,
+                        ISNULL(ActivityHead, 'Other')       AS ActivityHead,
+                        ISNULL(DetailOfActivity, '')        AS DetailOfActivity,
+                        CAST(ISNULL(Amount, 0) AS BIGINT)   AS Amount,
+                        CAST(BudgetDate AS DATE)            AS Date
+                    FROM vw_AllRequestsDetails
+                    WHERE TransType = 'Activity'
+                      AND UPPER(Product) LIKE '%{drill_prod.upper().split()[0]}%'
+                      AND BudgetDate IS NOT NULL
+                    ORDER BY Amount DESC
+                """, ftts_conn)
+
+                if len(detail_df) > 0:
+                    detail_df["Amount (PKR)"] = detail_df["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                    display_df = detail_df[["Date","Team","ActivityHead","DetailOfActivity","Amount (PKR)"]].copy()
+                    display_df["DetailOfActivity"] = display_df["DetailOfActivity"].str[:150]
+                    st.dataframe(display_df, use_container_width=True, hide_index=True,
+                        column_config={
+                            "DetailOfActivity": st.column_config.TextColumn("Activity Detail", width="large"),
+                        })
+                else:
+                    raise Exception("No SQL records — falling back to CSV")
+            else:
+                raise Exception("No live connection — falling back to CSV")
+        except Exception:
+            act_fb = df_act[df_act["Product"].str.upper().str.contains(drill_prod.upper().split()[0], na=False)]
+            if len(act_fb) > 0:
+                col_fb1, col_fb2 = st.columns(2)
+                with col_fb1:
+                    by_team_fb = act_fb.groupby("RequestorTeams")["TotalAmount"].sum().nlargest(10).reset_index()
+                    by_team_fb["Amount"] = by_team_fb["TotalAmount"].apply(fmt)
+                    fig = px.bar(by_team_fb, x="TotalAmount", y="RequestorTeams", orientation="h",
+                        text="Amount", color="TotalAmount", color_continuous_scale="Blues",
+                        title=f"Teams — {drill_prod}")
+                    fig.update_traces(textposition="outside", textfont_size=9)
+                    apply_layout(fig, height=max(300, len(by_team_fb)*34),
+                        yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                        xaxis=dict(gridcolor="#eee", title="Spend (PKR)"), coloraxis_showscale=False)
+                    st.plotly_chart(fig, use_container_width=True)
+                with col_fb2:
+                    by_head_fb = act_fb.groupby("ActivityHead")["TotalAmount"].sum().nlargest(8).reset_index()
+                    by_head_fb["Amount"] = by_head_fb["TotalAmount"].apply(fmt)
+                    fig = px.bar(by_head_fb, x="TotalAmount", y="ActivityHead", orientation="h",
+                        text="Amount", color="TotalAmount", color_continuous_scale="Oranges",
+                        title=f"Activity Types — {drill_prod}")
+                    fig.update_traces(textposition="outside", textfont_size=9)
+                    apply_layout(fig, height=max(300, len(by_head_fb)*34),
+                        yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                        xaxis=dict(gridcolor="#eee", title="Spend (PKR)"), coloraxis_showscale=False)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"No activity records found for {drill_prod}.")
 
         st.markdown("---")
 
-        # ════════════════════════════════════════════════════════════
-        # SECTION 3: ACTIVITY DRILL-DOWN — All Products + ROI Filter + Request/Transfer Teams
-        # ════════════════════════════════════════════════════════════
-        st.markdown(sec("🔍 What Activities Drove Each Product? — All Products Available"), unsafe_allow_html=True)
+        # ── Fastest Growing Products + Drill-Down ──
+        st.markdown(sec(f"🚀 Fastest Growing Products {FY_PREV_M} → {FY_LAST_M} — With Activity Drill-Down"), unsafe_allow_html=True)
         st.markdown(note(
-            "Choose a product (any of the 250+ in the database) to see exactly which activities drove it. "
-            "Sort by ROI to find the highest-return picks; sort by promo to find biggest spends. "
-            "Pulls from FTTS live SQL when available; falls back to activities CSV."
+            f"Products with ≥PKR 10M baseline in {FY_PREV_M}, ranked by growth into {FY_LAST_M}. "
+            "Pick one to see exactly which promotional activities drove its rise."
         ), unsafe_allow_html=True)
 
-        if not roi4_fy.empty:
-            # Aggregate across all FYs for product picker
-            all_roi_prods = roi4_fy.groupby("ProductName").agg(
-                GrossRev=("GrossRev","sum"),
-                PromoSpend=("PromoSpend","sum"),
-                NetRealizedRev=("NetRealizedRev","sum"),
-                TravelAlloc=("TravelAlloc","sum")
-            ).reset_index()
-            all_roi_prods["F1_Current"] = all_roi_prods["GrossRev"]/all_roi_prods["PromoSpend"]
-            all_roi_prods["F3_FullGTM"] = all_roi_prods["NetRealizedRev"]/(all_roi_prods["PromoSpend"]+all_roi_prods["TravelAlloc"]).replace(0,np.nan)
-            all_roi_prods = all_roi_prods.fillna(0).replace([np.inf,-np.inf], 0)
+        if FY_LAST_M and FY_PREV_M:
+            _r_prev_grow = _sales_net_m[_sales_net_m["FiscalYear"]==FY_PREV_M].groupby("ProductName")["TotalRevenue"].sum()
+            _r_last_grow = _sales_net_m[_sales_net_m["FiscalYear"]==FY_LAST_M].groupby("ProductName")["TotalRevenue"].sum()
+            top_g_mgmt = pd.DataFrame({"Prev":_r_prev_grow, "Last":_r_last_grow}).dropna()
+            top_g_mgmt = top_g_mgmt[top_g_mgmt["Prev"] > 10e6]
+            top_g_mgmt["Growth"] = (top_g_mgmt["Last"]-top_g_mgmt["Prev"])/top_g_mgmt["Prev"]*100
+            top_g_mgmt = top_g_mgmt.sort_values("Growth", ascending=False).head(15).reset_index()
+            # Normalize the index column to 'ProductName' for downstream code
+            if "ProductName" not in top_g_mgmt.columns:
+                top_g_mgmt = top_g_mgmt.rename(columns={top_g_mgmt.columns[0]: "ProductName"})
 
-            # Sorting filter for product picker
-            ds1, ds2 = st.columns(2)
-            with ds1:
-                drill_sort_by = st.selectbox("Sort products by",
-                                              ["F1 ROI (Highest)", "F3 ROI (Highest)",
-                                               "Promo Spend (Highest)", "Revenue (Highest)",
-                                               "Alphabetical"], key="cmo_drill_sort")
-            with ds2:
-                if drill_sort_by == "Alphabetical":
-                    sorted_prods = all_roi_prods.sort_values("ProductName")
-                elif "F1" in drill_sort_by:
-                    sorted_prods = all_roi_prods.sort_values("F1_Current", ascending=False)
-                elif "F3" in drill_sort_by:
-                    sorted_prods = all_roi_prods.sort_values("F3_FullGTM", ascending=False)
-                elif "Promo" in drill_sort_by:
-                    sorted_prods = all_roi_prods.sort_values("PromoSpend", ascending=False)
-                else:
-                    sorted_prods = all_roi_prods.sort_values("GrossRev", ascending=False)
+            # Chart
+            colors_grow = ["#FFD700" if i==0 else "#e65100" if g>100 else "#2e7d32" if g>50 else "#2c5f8a"
+                           for i, g in enumerate(top_g_mgmt["Growth"])]
+            fig_grow = go.Figure(go.Bar(
+                x=top_g_mgmt["Growth"], y=top_g_mgmt["ProductName"], orientation="h",
+                text=[f"{g:+.0f}%  ({p/1e6:.0f}M → {l/1e6:.0f}M)"
+                      for g, p, l in zip(top_g_mgmt["Growth"], top_g_mgmt["Prev"], top_g_mgmt["Last"])],
+                textposition="outside", textfont_size=9, marker_color=colors_grow))
+            apply_layout(fig_grow, height=440, yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                         xaxis=dict(gridcolor="#eee", title="Growth %"))
+            fig_grow.update_layout(title=f"Top 15 Fastest Growing (Gold = {top_g_mgmt.iloc[0]['ProductName']} {top_g_mgmt.iloc[0]['Growth']:+.0f}%)")
+            st.plotly_chart(fig_grow, use_container_width=True)
 
-                drill_options_all = sorted_prods["ProductName"].tolist()
-                drill_prod = st.selectbox(f"Pick a product ({len(drill_options_all)} available):",
-                                            options=drill_options_all,
-                                            index=0, key="cmo_drill_prod_v2")
+            # Drill-down selector
+            grow_options = top_g_mgmt["ProductName"].tolist()
+            grow_drill_m = st.selectbox(
+                "Select growing product to explore:",
+                options=grow_options,
+                index=0,
+                key="mgmt_mkt_grow_drill"
+            )
 
-            # KPI strip
-            prow = all_roi_prods[all_roi_prods["ProductName"]==drill_prod]
-            if len(prow):
-                pr_rev   = float(prow["GrossRev"].iloc[0])
-                pr_sp    = float(prow["PromoSpend"].iloc[0])
-                pr_roi1  = float(prow["F1_Current"].iloc[0])
-                pr_roi3  = float(prow["F3_FullGTM"].iloc[0])
-                kk1, kk2, kk3, kk4 = st.columns(4)
-                kk1.markdown(kpi(drill_prod, fmt(pr_rev), "Total revenue"), unsafe_allow_html=True)
-                kk2.markdown(kpi("Promo Spend", fmt(pr_sp), "All FYs"), unsafe_allow_html=True)
-                kk3.markdown(kpi("F1 ROI", f"{pr_roi1:.1f}x", "Gross ÷ Promo"), unsafe_allow_html=True)
-                kk4.markdown(kpi("F3 ROI", f"{pr_roi3:.1f}x", "Net ÷ (Promo+Travel)"), unsafe_allow_html=True)
+            gr_row = top_g_mgmt[top_g_mgmt["ProductName"]==grow_drill_m]
+            if len(gr_row):
+                gr_prev = gr_row["Prev"].values[0]
+                gr_last = gr_row["Last"].values[0]
+                gr_pct  = gr_row["Growth"].values[0]
+            else:
+                gr_prev = gr_last = gr_pct = 0
+            gr_spend = df_act[df_act["Product"].str.upper()==grow_drill_m.upper()]["TotalAmount"].sum()
 
-            st.markdown("<br>", unsafe_allow_html=True)
+            g1, g2, g3, g4 = st.columns(4)
+            g1.markdown(kpi(grow_drill_m, f"{gr_pct:+.0f}%", f"{FY_PREV_M}→{FY_LAST_M}"), unsafe_allow_html=True)
+            g2.markdown(kpi(f"Revenue {FY_PREV_M}", fmt(gr_prev), "Baseline"), unsafe_allow_html=True)
+            g3.markdown(kpi(f"Revenue {FY_LAST_M}", fmt(gr_last), f"+{fmt(gr_last-gr_prev)}"), unsafe_allow_html=True)
+            g4.markdown(kpi("Promo Spend", fmt(gr_spend), "All FYs"), unsafe_allow_html=True)
 
-            # Pull activities for this product — try SQL first, fall back to CSV with rich columns
+            # Try live SQL first, fallback to activities CSV
             try:
-                ftts_conn_d = get_ftts_connection() if "get_ftts_connection" in dir() else None
-                if ftts_conn_d:
-                    detail_sql = pd.read_sql(f"""
-                        SELECT
-                            ISNULL(RequestorTeams, 'Unknown')   AS RequestTeam,
-                            ISNULL(TransferorTeam, '')          AS TransferTeam,
-                            ISNULL(ActivityHead, 'Other')       AS ActivityHead,
-                            ISNULL(DetailOfActivity, '')        AS DetailOfActivity,
-                            CAST(ISNULL(Amount, 0) AS BIGINT)   AS Amount,
-                            CAST(BudgetDate AS DATE)            AS Date
+                ftts_conn_g = get_ftts_connection() if "get_ftts_connection" in dir() else None
+                if ftts_conn_g:
+                    grow_detail = pd.read_sql(f"""
+                        SELECT TOP 50
+                            ISNULL(RequestorTeams, 'Unknown')  AS Team,
+                            ISNULL(ActivityHead, 'Other')      AS ActivityHead,
+                            ISNULL(DetailOfActivity, '')       AS DetailOfActivity,
+                            CAST(ISNULL(Amount, 0) AS BIGINT)  AS Amount,
+                            CAST(BudgetDate AS DATE)           AS Date
                         FROM vw_AllRequestsDetails
                         WHERE TransType = 'Activity'
-                          AND UPPER(Product) LIKE '%{drill_prod.upper().split()[0]}%'
+                          AND UPPER(Product) LIKE '%{grow_drill_m.upper().split()[0]}%'
                           AND BudgetDate IS NOT NULL
                         ORDER BY Amount DESC
-                    """, ftts_conn_d)
-                    if len(detail_sql) > 0:
-                        # Slider for # records
-                        nrec = st.slider(f"# Records to show (Total: {len(detail_sql)})",
-                                          5, len(detail_sql), min(50, len(detail_sql)), key="cmo_drill_nrec")
-                        det_show = detail_sql.head(nrec).copy()
-                        det_show["Amount (PKR)"] = det_show["Amount"].apply(lambda x: f"PKR {x:,.0f}")
-                        det_show["DetailOfActivity"] = det_show["DetailOfActivity"].str[:150]
-                        st.dataframe(det_show[["Date","RequestTeam","TransferTeam","ActivityHead","DetailOfActivity","Amount (PKR)"]],
-                                     use_container_width=True, hide_index=True,
-                                     column_config={
-                                         "DetailOfActivity": st.column_config.TextColumn("Activity Detail", width="large"),
-                                     })
+                    """, ftts_conn_g)
+                    if len(grow_detail) > 0:
+                        st.markdown(f"**📋 {len(grow_detail)} Activity Records for {grow_drill_m}**")
+                        grow_detail["Amount (PKR)"] = grow_detail["Amount"].apply(lambda x: f"PKR {x:,.0f}")
+                        display_g = grow_detail[["Date","Team","ActivityHead","DetailOfActivity","Amount (PKR)"]].copy()
+                        display_g["DetailOfActivity"] = display_g["DetailOfActivity"].str[:150]
+                        st.dataframe(display_g, use_container_width=True, hide_index=True,
+                            column_config={
+                                "DetailOfActivity": st.column_config.TextColumn("Activity Detail", width="large"),
+                            })
                     else:
-                        raise Exception("No SQL records — fall back")
+                        raise Exception("No SQL records — falling back to CSV")
                 else:
-                    raise Exception("No live connection — fall back")
+                    raise Exception("No live connection — fallback to CSV")
             except Exception:
-                # CSV fallback — use df_act, has RequestorTeams (no TransferorTeam in CSV)
-                act_fb = df_act[df_act["Product"].str.upper().str.contains(drill_prod.upper().split()[0], na=False)]
-                if len(act_fb) > 0:
-                    nrec = st.slider(f"# Records to show (Total: {len(act_fb)})",
-                                      5, len(act_fb), min(50, len(act_fb)), key="cmo_drill_nrec_fb")
-                    fb_show = act_fb.copy()
-                    fb_show = fb_show.sort_values("TotalAmount", ascending=False).head(nrec).copy()
-                    fb_show["Amount (PKR)"] = fb_show["TotalAmount"].apply(lambda x: f"PKR {x:,.0f}")
-                    cols_show = ["RequestorTeams"]
-                    if "TransferorTeam" in fb_show.columns: cols_show.append("TransferorTeam")
-                    cols_show += ["ActivityHead", "Amount (PKR)"]
-                    if "Date" in fb_show.columns: cols_show = ["Date"] + cols_show
-                    st.caption("ℹ️ Fallback: activities CSV (no TransferorTeam column). Live SQL provides full Request+Transfer team trail.")
-                    st.dataframe(fb_show[[c for c in cols_show if c in fb_show.columns]],
-                                  use_container_width=True, hide_index=True)
-
-                    # Visualization charts
-                    cv1, cv2 = st.columns(2)
-                    with cv1:
-                        st.markdown(f"**👥 Top Teams Working on {drill_prod}**")
-                        team_breakdown = act_fb.groupby("RequestorTeams")["TotalAmount"].sum().nlargest(15).reset_index()
-                        team_breakdown["Amount"] = team_breakdown["TotalAmount"].apply(fmt)
-                        fig = px.bar(team_breakdown, x="TotalAmount", y="RequestorTeams", orientation="h",
-                                     text="Amount", color="TotalAmount", color_continuous_scale="Blues")
+                act_gr_fb = df_act[df_act["Product"].str.upper().str.contains(grow_drill_m.upper().split()[0], na=False)]
+                if len(act_gr_fb) > 0:
+                    cg_fb1, cg_fb2 = st.columns(2)
+                    with cg_fb1:
+                        st.markdown(f"**👥 Teams That Worked on {grow_drill_m}**")
+                        by_team_g = act_gr_fb.groupby("RequestorTeams")["TotalAmount"].sum().nlargest(10).reset_index()
+                        by_team_g["Amount"] = by_team_g["TotalAmount"].apply(fmt)
+                        fig = px.bar(by_team_g, x="TotalAmount", y="RequestorTeams", orientation="h",
+                            text="Amount", color="TotalAmount", color_continuous_scale="Greens")
                         fig.update_traces(textposition="outside", textfont_size=9)
-                        apply_layout(fig, height=max(350, len(team_breakdown)*32),
-                                     yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                                     xaxis=dict(gridcolor="#eee", title="Spend (PKR)"), coloraxis_showscale=False)
+                        apply_layout(fig, height=max(300, len(by_team_g)*34),
+                            yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee", title="Spend (PKR)"), coloraxis_showscale=False)
                         st.plotly_chart(fig, use_container_width=True)
-                    with cv2:
-                        st.markdown(f"**📌 Activity Types for {drill_prod}**")
-                        head_breakdown = act_fb.groupby("ActivityHead")["TotalAmount"].sum().nlargest(15).reset_index()
-                        head_breakdown["Amount"] = head_breakdown["TotalAmount"].apply(fmt)
-                        fig = px.bar(head_breakdown, x="TotalAmount", y="ActivityHead", orientation="h",
-                                     text="Amount", color="TotalAmount", color_continuous_scale="Oranges")
+                    with cg_fb2:
+                        st.markdown(f"**📌 Activity Types for {grow_drill_m}**")
+                        by_head_g = act_gr_fb.groupby("ActivityHead")["TotalAmount"].sum().nlargest(8).reset_index()
+                        by_head_g["Amount"] = by_head_g["TotalAmount"].apply(fmt)
+                        fig = px.bar(by_head_g, x="TotalAmount", y="ActivityHead", orientation="h",
+                            text="Amount", color="TotalAmount", color_continuous_scale="Purples")
                         fig.update_traces(textposition="outside", textfont_size=9)
-                        apply_layout(fig, height=max(350, len(head_breakdown)*32),
-                                     yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                                     xaxis=dict(gridcolor="#eee", title="Spend (PKR)"), coloraxis_showscale=False)
+                        apply_layout(fig, height=max(300, len(by_head_g)*34),
+                            yaxis=dict(autorange="reversed", gridcolor="#eee"),
+                            xaxis=dict(gridcolor="#eee", title="Spend (PKR)"), coloraxis_showscale=False)
                         st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.info(f"No activity records found for {drill_prod} in CSV. Live SQL may have more.")
-
-        st.markdown("---")
-
-        # ════════════════════════════════════════════════════════════
-        # SECTION 4: FASTEST GROWING PRODUCTS — All Products + FY filter + Revenue/Units toggle
-        # ════════════════════════════════════════════════════════════
-        st.markdown(sec("🚀 Fastest Growing Products — All Products + FY Comparison + Drill-Down"), unsafe_allow_html=True)
-        st.markdown(note(
-            "Compare any two FYs (FY23-24 → FY24-25, FY24-25 → FY25-26, etc.). All products available. "
-            "Toggle Revenue/Units. Sort top/bottom (declining). Pick any product to see its activity drill-down."
-        ), unsafe_allow_html=True)
-
-        # 5-control row
-        gc1, gc2, gc3, gc4, gc5 = st.columns(5)
-        all_fys_grow = sorted(_sales_net_m["FiscalYear"].dropna().unique()) if "FiscalYear" in _sales_net_m.columns else []
-        with gc1:
-            grow_old_cmo = st.selectbox("From FY", all_fys_grow,
-                                         index=max(0, len(all_fys_grow)-2) if len(all_fys_grow) >= 2 else 0,
-                                         key="cmo_grow_from")
-        with gc2:
-            valid_to = [fy for fy in all_fys_grow if fy > grow_old_cmo]
-            grow_new_cmo = st.selectbox("To FY", valid_to,
-                                         index=len(valid_to)-1 if valid_to else 0,
-                                         key="cmo_grow_to") if valid_to else None
-        with gc3:
-            grow_metric_cmo = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="cmo_grow_metric")
-        with gc4:
-            grow_sort_cmo = st.selectbox("Sort", ["Top (Fastest)", "Bottom (Slowest/Declining)"], key="cmo_grow_sort")
-        with gc5:
-            grow_filter_cmo = st.selectbox("Filter",
-                                            ["All Products", "Mature Only (≥24mo, baseline)"],
-                                            key="cmo_grow_filter")
-
-        grow_metric_col_cmo = "TotalUnits" if grow_metric_cmo == "Units" else "TotalRevenue"
-        grow_fmt_cmo = (lambda v: fmt_num(v) if grow_metric_cmo == "Units" else fmt(v))
-
-        if grow_old_cmo and grow_new_cmo and grow_old_cmo != grow_new_cmo:
-            # Months in each FY
-            old_mo_cmo = _sales_net_m[_sales_net_m["FiscalYear"]==grow_old_cmo].groupby(["Yr","Mo"]).ngroups if "Yr" in _sales_net_m.columns else 12
-            new_mo_cmo = _sales_net_m[_sales_net_m["FiscalYear"]==grow_new_cmo].groupby(["Yr","Mo"]).ngroups if "Yr" in _sales_net_m.columns else 12
-
-            r_old_cmo = _sales_net_m[_sales_net_m["FiscalYear"]==grow_old_cmo].groupby("ProductName")[grow_metric_col_cmo].sum() if grow_metric_col_cmo in _sales_net_m.columns else pd.Series()
-            r_new_cmo = _sales_net_m[_sales_net_m["FiscalYear"]==grow_new_cmo].groupby("ProductName")[grow_metric_col_cmo].sum() if grow_metric_col_cmo in _sales_net_m.columns else pd.Series()
-
-            # Annualize partial FYs
-            if old_mo_cmo < 12 and old_mo_cmo > 0:
-                r_old_cmo = r_old_cmo * (12 / old_mo_cmo)
-            if new_mo_cmo < 12 and new_mo_cmo > 0:
-                r_new_cmo = r_new_cmo * (12 / new_mo_cmo)
-
-            grow_df_cmo = pd.DataFrame({"old": r_old_cmo, "new": r_new_cmo}).fillna(0)
-
-            # Join with launch data
-            grow_df_cmo = grow_df_cmo.merge(product_launch[["ProductName","LaunchAgeMonths","ActiveMonths","FirstSeen"]],
-                                              left_index=True, right_on="ProductName", how="left")
-            grow_df_cmo["LaunchAgeMonths"] = grow_df_cmo["LaunchAgeMonths"].fillna(99)
-            grow_df_cmo["ActiveMonths"] = grow_df_cmo["ActiveMonths"].fillna(0)
-
-            # Apply filter
-            if grow_filter_cmo.startswith("Mature"):
-                baseline_cmo = 500_000 if grow_metric_cmo == "Units" else 50_000_000
-                scope_cmo = grow_df_cmo[
-                    (grow_df_cmo["old"] >= baseline_cmo) &
-                    (grow_df_cmo["LaunchAgeMonths"] >= 24) &
-                    (grow_df_cmo["ActiveMonths"] >= 12) &
-                    (grow_df_cmo["new"] > 0)
-                ].copy()
-            else:
-                scope_cmo = grow_df_cmo[(grow_df_cmo["old"] > 0) | (grow_df_cmo["new"] > 0)].copy()
-
-            scope_cmo["GrowthPct"] = scope_cmo.apply(
-                lambda r: ((r["new"]/r["old"] - 1) * 100) if r["old"] > 0 else
-                          (9999 if r["new"] > 0 else 0),
-                axis=1
-            )
-
-            def gf_label_cmo(g_pct, has_old):
-                if pd.isna(g_pct): return "—"
-                if not has_old or g_pct == 9999: return "🆕 NEW"
-                if g_pct >= 100: return f"{(g_pct/100)+1:.1f}x"
-                return f"{g_pct:+.0f}%"
-            scope_cmo["Label"] = scope_cmo.apply(lambda r: gf_label_cmo(r["GrowthPct"], r["old"] > 0), axis=1)
-
-            total_grow_cmo = len(scope_cmo)
-            if total_grow_cmo == 0:
-                st.warning(f"No products match filter for {grow_old_cmo}→{grow_new_cmo}.")
-            else:
-                asc_grow_cmo = (grow_sort_cmo == "Bottom (Slowest/Declining)")
-                n_grow_cmo = st.slider(f"# Products to show (Total: {total_grow_cmo})",
-                                        5, total_grow_cmo, min(50, total_grow_cmo), key="cmo_grow_n")
-                disp_grow_cmo = scope_cmo.sort_values("GrowthPct", ascending=asc_grow_cmo).head(n_grow_cmo).copy()
-
-                # Chart
-                disp_grow_cmo["ChartGrowth"] = disp_grow_cmo["GrowthPct"].clip(upper=1000, lower=-100)
-                colors_grow_cmo = ["#FFD700" if i==0 and not asc_grow_cmo else "#2e7d32" if g >= 100 else "#1565c0" if g >= 30 else "#fb8c00" if g >= 0 else "#c62828"
-                                    for i, g in enumerate(disp_grow_cmo["ChartGrowth"])]
-                fig_grow_cmo = go.Figure(go.Bar(
-                    x=disp_grow_cmo["ChartGrowth"], y=disp_grow_cmo["ProductName"], orientation="h",
-                    text=disp_grow_cmo["Label"], textposition="outside", textfont_size=9, marker_color=colors_grow_cmo))
-                apply_layout(fig_grow_cmo, height=max(450, n_grow_cmo*22),
-                             yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                             xaxis=dict(gridcolor="#eee", title=f"{grow_metric_cmo} Growth % (capped 1000%)"))
-                fig_grow_cmo.update_layout(title=f"{'Bottom' if asc_grow_cmo else 'Top'} {n_grow_cmo} — {grow_old_cmo}→{grow_new_cmo} ({grow_metric_cmo})")
-                st.plotly_chart(fig_grow_cmo, use_container_width=True)
-
-                # Detail table with launch date
-                with st.expander(f"📋 Detail Table — All {total_grow_cmo} Products (with Launch Date)"):
-                    disp_table_cmo = scope_cmo.sort_values("GrowthPct", ascending=asc_grow_cmo).copy()
-                    disp_table_cmo["Launch"] = disp_table_cmo["FirstSeen"].apply(lambda d: d.strftime("%b %Y") if pd.notna(d) else "—")
-                    disp_table_cmo["Age (mo)"] = disp_table_cmo["LaunchAgeMonths"].apply(lambda x: f"{int(x)}" if pd.notna(x) else "—")
-                    disp_table_cmo["Old"] = disp_table_cmo["old"].apply(grow_fmt_cmo)
-                    disp_table_cmo["New"] = disp_table_cmo["new"].apply(grow_fmt_cmo)
-                    disp_table_cmo["Growth"] = disp_table_cmo["Label"]
-                    show_cols = ["ProductName","Launch","Age (mo)","ActiveMonths","Old","New","Growth"]
-                    disp_table_cmo = disp_table_cmo[show_cols]
-                    disp_table_cmo.columns = ["Product","Launch","Age (mo)","Active mo",
-                                               f"{grow_old_cmo}",f"{grow_new_cmo}","Growth"]
-                    st.dataframe(disp_table_cmo, use_container_width=True, hide_index=True, height=400)
-
-                # Drill-down for chosen growing product
-                drill_options_grow_cmo = disp_grow_cmo["ProductName"].tolist()
-                if drill_options_grow_cmo:
-                    grow_drill_cmo = st.selectbox("Pick a growing product for activity drill-down:",
-                                                    options=drill_options_grow_cmo, key="cmo_grow_drill")
-                    if grow_drill_cmo:
-                        gr_act = df_act[df_act["Product"].str.upper().str.contains(grow_drill_cmo.upper().split()[0], na=False)]
-                        if len(gr_act) > 0:
-                            cgd1, cgd2 = st.columns(2)
-                            with cgd1:
-                                st.markdown(f"**👥 Top Teams for {grow_drill_cmo}**")
-                                t_break = gr_act.groupby("RequestorTeams")["TotalAmount"].sum().nlargest(15).reset_index()
-                                t_break["Amount"] = t_break["TotalAmount"].apply(fmt)
-                                fig = px.bar(t_break, x="TotalAmount", y="RequestorTeams", orientation="h",
-                                              text="Amount", color="TotalAmount", color_continuous_scale="Greens")
-                                fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=max(350, len(t_break)*30),
-                                              yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                                              xaxis=dict(gridcolor="#eee", title="Spend"), coloraxis_showscale=False)
-                                st.plotly_chart(fig, use_container_width=True)
-                            with cgd2:
-                                st.markdown(f"**📌 Activity Types for {grow_drill_cmo}**")
-                                h_break = gr_act.groupby("ActivityHead")["TotalAmount"].sum().nlargest(15).reset_index()
-                                h_break["Amount"] = h_break["TotalAmount"].apply(fmt)
-                                fig = px.bar(h_break, x="TotalAmount", y="ActivityHead", orientation="h",
-                                              text="Amount", color="TotalAmount", color_continuous_scale="Purples")
-                                fig.update_traces(textposition="outside", textfont_size=9)
-                                apply_layout(fig, height=max(350, len(h_break)*30),
-                                              yaxis=dict(autorange="reversed", gridcolor="#eee"),
-                                              xaxis=dict(gridcolor="#eee", title="Spend"), coloraxis_showscale=False)
-                                st.plotly_chart(fig, use_container_width=True)
-
-                            # Records table
-                            n_recs_g = st.slider(f"# Records for {grow_drill_cmo} (Total: {len(gr_act)})",
-                                                  5, len(gr_act), min(50, len(gr_act)), key="cmo_grow_drill_nrec")
-                            gr_show = gr_act.sort_values("TotalAmount", ascending=False).head(n_recs_g).copy()
-                            gr_show["Amount (PKR)"] = gr_show["TotalAmount"].apply(lambda x: f"PKR {x:,.0f}")
-                            cols_to_show = []
-                            for c in ["Date","RequestorTeams","TransferorTeam","ActivityHead","Amount (PKR)"]:
-                                if c in gr_show.columns: cols_to_show.append(c)
-                            st.dataframe(gr_show[cols_to_show], use_container_width=True, hide_index=True, height=400)
+                    st.info(f"No activity records found for {grow_drill_m} in current data.")
 
         st.markdown("---")
 
