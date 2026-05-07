@@ -3161,7 +3161,7 @@ Potential annual saving:
         ), unsafe_allow_html=True)
         st.markdown("---")
 
-        # ═══ Live FY-level metrics (replace calendar-year) ═══
+        # ═══ Live FY-level metrics ═══
         _sales_net_ei  = df_sales[df_sales["SaleFlag"].isin(["S","R"])] if "SaleFlag" in df_sales.columns else df_sales
         _sales_gross_ei= df_sales[df_sales["SaleFlag"]=="S"] if "SaleFlag" in df_sales.columns else df_sales
         _net_by_fy_ei  = _sales_net_ei.groupby("FiscalYear")["TotalRevenue"].sum()
@@ -3172,32 +3172,119 @@ Potential annual saving:
         complete_fys_ei = [fy for fy in fys_ei if _mo_by_fy_ei.get(fy, 0) == 12]
         FY_LAST_EI  = complete_fys_ei[-1] if complete_fys_ei else None
         FY_PREV_EI  = complete_fys_ei[-2] if len(complete_fys_ei) >= 2 else None
-        FY_CURR_EI  = fys_ei[-1] if fys_ei else None
+        FY_CURR_EI  = fys_ei[-1] if fys_ei and fys_ei[-1] not in complete_fys_ei else None
 
-        # Aggregates
-        rev_last_ei = _net_by_fy_ei.get(FY_LAST_EI, 0) if FY_LAST_EI else 0
-        rev_prev_ei = _net_by_fy_ei.get(FY_PREV_EI, 0) if FY_PREV_EI else 0
-        sp_last_ei  = _sp_by_fy_ei.get(FY_LAST_EI, 0) if FY_LAST_EI else 0
-        sp_prev_ei  = _sp_by_fy_ei.get(FY_PREV_EI, 0) if FY_PREV_EI else 0
-        roi_last_ei = rev_last_ei/sp_last_ei if sp_last_ei > 0 else 0
-        roi_prev_ei = rev_prev_ei/sp_prev_ei if sp_prev_ei > 0 else 0
-        rev_growth_ei   = (rev_last_ei-rev_prev_ei)/rev_prev_ei*100 if rev_prev_ei > 0 else 0
-        spend_growth_ei = (sp_last_ei-sp_prev_ei)/sp_prev_ei*100 if sp_prev_ei > 0 else 0
+        # ═══ Section 1: Business Overview — ALL FY-WISE FOR FY24-25 (latest complete) ═══
+        # Pattern: all KPIs are for FY_LAST_EI (latest complete fiscal year — typically FY24-25).
+        # Each KPI shows its database source and YoY context vs FY_PREV_EI (FY23-24).
+        # FY_CURR_EI (FY25-26 partial) gets its own dedicated KPI tile.
 
-        trips_all_ei = df_travel["TravelCount"].sum()
-        sp_all_ei    = df_act["TotalAmount"].sum()
-        rev_all_ei   = _sales_net_ei["TotalRevenue"].sum()
-        zrev_all_ei  = df_zsdcy["Revenue"].sum()
-        roi_all_ei   = rev_all_ei/sp_all_ei if sp_all_ei > 0 else 0
+        # Aggregates per FY (for both FY_PREV_EI and FY_LAST_EI and FY_CURR_EI)
+        def _net_for(fy):    return float(_net_by_fy_ei.get(fy, 0)) if fy else 0
+        def _spend_for(fy):  return float(_sp_by_fy_ei.get(fy, 0)) if fy else 0
+        def _zrev_for(fy):   return float(df_zsdcy[df_zsdcy["FiscalYear"]==fy]["Revenue"].sum()) if fy and "FiscalYear" in df_zsdcy.columns else 0
 
-        # ═══ Section 1: Business Overview ═══
-        st.markdown("### 📊 Complete Business Overview — All Fiscal Years")
+        rev_prev_ei  = _net_for(FY_PREV_EI)
+        rev_last_ei  = _net_for(FY_LAST_EI)
+        rev_curr_ei  = _net_for(FY_CURR_EI) if FY_CURR_EI else 0
+        sp_prev_ei   = _spend_for(FY_PREV_EI)
+        sp_last_ei   = _spend_for(FY_LAST_EI)
+        sp_curr_ei   = _spend_for(FY_CURR_EI) if FY_CURR_EI else 0
+        zrev_last_ei = _zrev_for(FY_LAST_EI)
+        zrev_curr_ei = _zrev_for(FY_CURR_EI) if FY_CURR_EI else 0
+
+        # ROI Formula 1 (Gross ÷ Promo) per FY — explicit formula name in tooltip
+        roi_prev_ei = rev_prev_ei / sp_prev_ei if sp_prev_ei > 0 else 0
+        roi_last_ei = rev_last_ei / sp_last_ei if sp_last_ei > 0 else 0
+        roi_curr_ei = rev_curr_ei / sp_curr_ei if sp_curr_ei > 0 else 0
+        rev_growth_ei = (rev_last_ei-rev_prev_ei)/rev_prev_ei*100 if rev_prev_ei > 0 else 0
+        rev_growth_curr = (rev_curr_ei-rev_last_ei)/rev_last_ei*100 if rev_last_ei > 0 and FY_CURR_EI else 0
+
+        # All-time totals (referenced in tooltips)
+        trips_all_ei = int(df_travel["TravelCount"].sum())
+        sp_all_ei    = float(df_act["TotalAmount"].sum())
+        rev_all_ei   = float(_sales_net_ei["TotalRevenue"].sum())
+        zrev_all_ei  = float(df_zsdcy["Revenue"].sum())
+
+        # ─── Section 1: Latest Complete FY (FY24-25) — 5 KPIs in same pattern ───
+        st.markdown(f"### 📊 Business Overview — **{FY_LAST_EI or 'Latest Complete FY'}** (latest complete fiscal year)")
+        st.caption(f"All metrics below are for fiscal year **{FY_LAST_EI or '?'}** (Pakistan FY: Jul–Jun). Year-over-year comparisons vs **{FY_PREV_EI or '?'}**.")
         c1,c2,c3,c4,c5 = st.columns(5)
-        c1.markdown(kpi("Secondary Revenue",  fmt(rev_all_ei),         f"DSR — All FYs"), unsafe_allow_html=True)
-        c2.markdown(kpi("Primary Revenue",    fmt(zrev_all_ei),        "ZSDCY — 2024 & 2025"), unsafe_allow_html=True)
-        c3.markdown(kpi("Promo Investment",   fmt(sp_all_ei),          "Activities — All FYs"), unsafe_allow_html=True)
-        c4.markdown(kpi("Overall ROI",        f"{roi_all_ei:.1f}x",    f"PKR 1 = PKR {roi_all_ei:.1f} net"), unsafe_allow_html=True)
-        c5.markdown(kpi("Revenue Growth",     f"{rev_growth_ei:+.1f}%", f"{FY_PREV_EI} → {FY_LAST_EI}" if FY_PREV_EI else "YoY"), unsafe_allow_html=True)
+        c1.markdown(kpi(f"Secondary Revenue ({FY_LAST_EI or '?'})",
+                         fmt(rev_last_ei),
+                         f"DSR — Net Sales (S+R). YoY: {rev_growth_ei:+.1f}% vs {FY_PREV_EI or '?'}"),
+                     unsafe_allow_html=True)
+        c2.markdown(kpi(f"Primary Revenue ({FY_LAST_EI or '?'})",
+                         fmt(zrev_last_ei),
+                         f"ZSDCY — Distribution sales"),
+                     unsafe_allow_html=True)
+        c3.markdown(kpi(f"Promo Investment ({FY_LAST_EI or '?'})",
+                         fmt(sp_last_ei),
+                         f"FTTS Activities — TotalAmount"),
+                     unsafe_allow_html=True)
+        c4.markdown(kpi(f"ROI F1 ({FY_LAST_EI or '?'})",
+                         f"{roi_last_ei:.1f}x",
+                         f"Formula 1: Gross Revenue ÷ Promo Spend (DSR ÷ FTTS)"),
+                     unsafe_allow_html=True)
+        c5.markdown(kpi(f"Revenue Growth ({FY_PREV_EI or '?'} → {FY_LAST_EI or '?'})",
+                         f"{rev_growth_ei:+.1f}%",
+                         f"DSR Net Revenue YoY"),
+                     unsafe_allow_html=True)
+
+        # ─── Section 2: Current Partial FY (FY25-26) — Same pattern, explicit "partial" labels ───
+        if FY_CURR_EI:
+            _curr_mo_ei = int(_mo_by_fy_ei.get(FY_CURR_EI, 0))
+            st.markdown(f"### 📅 Current Fiscal Year — **{FY_CURR_EI}** (partial — {_curr_mo_ei} months of 12)")
+            st.caption(f"Same metrics for current fiscal year. ⚠️ {FY_CURR_EI} is partial ({_curr_mo_ei} months) — not directly comparable to a complete FY without annualization.")
+            cc1,cc2,cc3,cc4,cc5 = st.columns(5)
+            cc1.markdown(kpi(f"Secondary Revenue ({FY_CURR_EI})",
+                              fmt(rev_curr_ei),
+                              f"DSR — {_curr_mo_ei}mo of 12. Trend: {rev_growth_curr:+.1f}% vs {FY_LAST_EI or '?'} (raw, NOT annualized)"),
+                          unsafe_allow_html=True)
+            cc2.markdown(kpi(f"Primary Revenue ({FY_CURR_EI})",
+                              fmt(zrev_curr_ei),
+                              f"ZSDCY — partial"),
+                          unsafe_allow_html=True)
+            cc3.markdown(kpi(f"Promo Investment ({FY_CURR_EI})",
+                              fmt(sp_curr_ei),
+                              f"FTTS Activities — partial"),
+                          unsafe_allow_html=True)
+            cc4.markdown(kpi(f"ROI F1 ({FY_CURR_EI})",
+                              f"{roi_curr_ei:.1f}x",
+                              f"Formula 1: Gross ÷ Promo (partial — both numerator & denominator are partial)"),
+                          unsafe_allow_html=True)
+            # Annualized projection for current FY
+            if _curr_mo_ei > 0:
+                rev_annualized = rev_curr_ei * (12 / _curr_mo_ei)
+                rev_proj_growth = (rev_annualized - rev_last_ei) / rev_last_ei * 100 if rev_last_ei > 0 else 0
+                cc5.markdown(kpi(f"Annualized Projection ({FY_CURR_EI})",
+                                  fmt(rev_annualized),
+                                  f"If trend continues: {rev_proj_growth:+.1f}% vs {FY_LAST_EI or '?'}"),
+                              unsafe_allow_html=True)
+            else:
+                cc5.markdown(kpi(f"Annualized Projection", "N/A", "Need ≥1 month of data"), unsafe_allow_html=True)
+
+        # ─── Section 3: All-Time Cumulative Reference ───
+        st.markdown(f"### 🌐 All-Time Cumulative — All Fiscal Years ({fys_ei[0] if fys_ei else '?'} → {fys_ei[-1] if fys_ei else '?'})")
+        st.caption("Cumulative totals across all fiscal years on record — provided for context only (do not mix with single-FY KPIs above).")
+        cum1,cum2,cum3,cum4 = st.columns(4)
+        roi_all_ei = rev_all_ei / sp_all_ei if sp_all_ei > 0 else 0
+        cum1.markdown(kpi("Secondary Revenue (All FYs)",
+                           fmt(rev_all_ei),
+                           f"DSR — Net Sales total across {len(fys_ei)} FYs"),
+                       unsafe_allow_html=True)
+        cum2.markdown(kpi("Primary Revenue (All FYs)",
+                           fmt(zrev_all_ei),
+                           f"ZSDCY — Distribution total"),
+                       unsafe_allow_html=True)
+        cum3.markdown(kpi("Promo Investment (All FYs)",
+                           fmt(sp_all_ei),
+                           f"FTTS Activities — total spend"),
+                       unsafe_allow_html=True)
+        cum4.markdown(kpi("ROI F1 (All FYs)",
+                           f"{roi_all_ei:.1f}x",
+                           f"Formula 1: Gross ÷ Promo, weighted across all FYs"),
+                       unsafe_allow_html=True)
         st.markdown("---")
 
         # ═══ 10 Key Findings ═══
