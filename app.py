@@ -648,13 +648,14 @@ if page == "📈 Sales Analysis":
     fmt_metric = (lambda v: fmt_num(v) if is_units else fmt(v))
 
 
-    # Live total count from DSR
-    _p1_dsr_total = (df_sales[df_sales["SaleFlag"].isin(["S","R"])]["ProductName"]
-                      .dropna().astype(str).str.strip().nunique() if "SaleFlag" in df_sales.columns
-                      else df_sales["ProductName"].dropna().astype(str).str.strip().nunique())
+    # CANONICAL DSR PRODUCT TOTAL — match the explorer's counting method
+    # so the header number matches the slider's "Total: N".
+    # Uses _gross_src (S only) groupby with revenue > 0 across all FYs.
+    _p1_canon = _gross_src.groupby("ProductName")["TotalRevenue"].sum()
+    _p1_dsr_total = int((_p1_canon > 0).sum())
 
     st.markdown(sec(f"Product {metric_toggle}: Last 3 Fiscal Years — Side by Side"), unsafe_allow_html=True)
-    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b> with sales activity (showing top 15).</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b> with sales activity (all-time, gross sales). Showing top 15 by combined {metric_toggle.lower()} across the 3 FYs.</div>", unsafe_allow_html=True)
     st.markdown(note(
         f"Comparing {', '.join([fy_label[fy] for fy in last_3_fys])}. "
         f"{'Note: FY25-26 currently has only ~10 months of data (Jul 2025 – Apr 2026 partial)' if any(fy_months_count[fy]<12 for fy in last_3_fys) else 'All shown FYs are complete.'} "
@@ -692,7 +693,6 @@ if page == "📈 Sales Analysis":
     # ─── Product Explorer — ALL products, slider goes from 5 to total count ───
     st.markdown("---")
     st.markdown(sec("🔍 Product Explorer — Adjustable View (All Products)"), unsafe_allow_html=True)
-    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b>. Adjust slider to show any number from 5 to all.</div>", unsafe_allow_html=True)
 
     # First filter by selected metric and FY scope to figure out total product count
     fy_options = ["All Fiscal Years"] + _fy_sorted_p2
@@ -716,6 +716,10 @@ if page == "📈 Sales Analysis":
     prod_all_s = _src.groupby("ProductName")[explorer_col].sum().reset_index()
     prod_all_s = prod_all_s[prod_all_s[explorer_col] > 0]
     total_products = len(prod_all_s)
+
+    # DYNAMIC HEADER — shows the count for currently selected filter scope
+    _scope_desc = f"{fy_sel}, {explorer_metric}" if fy_sel != "All Fiscal Years" else f"All FYs, {explorer_metric}"
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database — {total_products} products</b> in current scope ({_scope_desc}). All-time DSR total: {_p1_dsr_total} products.</div>", unsafe_allow_html=True)
 
     # Slider goes from 5 to ALL products (so "show 250" reveals everything)
     with col_sf1:
@@ -744,7 +748,6 @@ if page == "📈 Sales Analysis":
 
     # ─── Product Growth Explorer — ALL products (with Mature toggle) ───
     st.markdown(sec(f"🚀 Product Growth Explorer — All Products"), unsafe_allow_html=True)
-    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b>. Filter narrows the count based on growth criteria you select.</div>", unsafe_allow_html=True)
 
     # FY pair selector — let user pick which 2 FYs to compare
     col_g1, col_g2, col_g3, col_g4, col_g5 = st.columns([1,1,1,1,1])
@@ -833,6 +836,9 @@ if page == "📈 Sales Analysis":
         else:
             asc_grow = (grow_sort == "Bottom (Slowest / Declining)")
             scope_sorted = scope.sort_values("GrowthPct", ascending=asc_grow).reset_index(drop=True)
+
+            # DYNAMIC HEADER — count for current filter scope
+            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database — {total_in_scope} products</b> in current scope ({grow_fy_old}→{grow_fy_new}, {grow_metric}, {grow_filter}). All-time DSR total: {_p1_dsr_total} products.</div>", unsafe_allow_html=True)
 
             n_grow = st.slider(f"Number of products to show (Total: {total_in_scope})",
                                5, total_in_scope, min(50, total_in_scope), key="p1_grow_n")
@@ -1064,10 +1070,6 @@ elif page == "💰 Promotional Analysis":
     # ── Interactive Explorer — Split: Teams + Products (separate, all items) ──
     st.markdown("---")
     st.markdown(sec("🔍 Promo Spend Explorer — Adjustable (All Teams + All Products)"), unsafe_allow_html=True)
-    # Live counts from FTTS Activities database
-    _p2_ftts_teams = df_act[df_act["TotalAmount"] > 0]["RequestorTeams"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_act.columns else 0
-    _p2_ftts_prods = df_act[df_act["TotalAmount"] > 0]["Product"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_act.columns else 0
-    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>FTTS Activities database total: {_p2_ftts_teams} teams + {_p2_ftts_prods} products</b> with promo spend.</div>", unsafe_allow_html=True)
 
     # FY filter for Explorer (lets supervisor compare any FY against another)
     explorer_fy_options = ["All Selected FYs"] + sorted(df_af["FiscalYear"].dropna().unique().tolist()) if "FiscalYear" in df_af.columns else ["All"]
@@ -1077,6 +1079,16 @@ elif page == "💰 Promotional Analysis":
         df_explorer = df_af.copy()
     else:
         df_explorer = df_af[df_af["FiscalYear"] == promo_fy_pick].copy()
+
+    # All-time canonical totals
+    _p2_ftts_teams_all = df_act[df_act["TotalAmount"] > 0]["RequestorTeams"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_act.columns else 0
+    _p2_ftts_prods_all = df_act[df_act["TotalAmount"] > 0]["Product"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_act.columns else 0
+
+    # Scoped (FY-filtered) totals — these match what the slider will show
+    _p2_teams_scope = df_explorer[df_explorer["TotalAmount"] > 0]["RequestorTeams"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_explorer.columns else 0
+    _p2_prods_scope = df_explorer[df_explorer["TotalAmount"] > 0]["Product"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_explorer.columns else 0
+
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>FTTS Activities database — {_p2_teams_scope} teams + {_p2_prods_scope} products</b> in current scope ({promo_fy_pick}). All-time totals: {_p2_ftts_teams_all} teams + {_p2_ftts_prods_all} products.</div>", unsafe_allow_html=True)
 
     # ─── Two side-by-side panels: Teams (left) and Products (right) ───
     col_pe1, col_pe2 = st.columns(2)
@@ -1767,13 +1779,14 @@ elif page == "📦 Distribution Analysis":
     # ─── PANEL 1: PRODUCT REVENUE EXPLORER (matches Page 1 Product Explorer architecture) ───
     with col1:
         st.markdown(sec("🏆 Product Revenue Explorer (SKU Level) — All Products"), unsafe_allow_html=True)
-        # Total count from ZSDCY (live)
+        # All-time canonical total
         if "Material Name" in df_zsdcy.columns:
             _p4top_total = df_zsdcy["Material Name"].dropna().astype(str).nunique()
-            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4top_total} unique SKUs</b> (pack-size variants).</div>", unsafe_allow_html=True)
         elif len(df_zprod) > 0:
             _p4top_total = len(df_zprod)
-            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4top_total} unique SKUs.</b></div>", unsafe_allow_html=True)
+        else:
+            _p4top_total = 0
+
         tcf1, tcf2 = st.columns(2)
         with tcf1:
             top_metric = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="p4_top_metric")
@@ -1800,11 +1813,14 @@ elif page == "📦 Distribution Analysis":
             top_agg = top_agg[top_agg[top_col_p4] > 0]
             total_skus = len(top_agg)
 
+            # DYNAMIC HEADER — show count for current scope + all-time
+            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database — {total_skus} SKUs</b> in current scope ({top_fy}, {top_metric}). All-time ZSDCY total: {_p4top_total} SKUs.</div>", unsafe_allow_html=True)
+
             with tcf4:
                 if total_skus >= 5:
                     n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
                                       min(50, total_skus), key="p4_top_n")
-                    st.caption("ℹ️ ZSDCY tracks SKUs (pack-size variants), not unique products. ~932 SKUs ≈ 200 products × multiple pack sizes.")
+                    st.caption("ℹ️ ZSDCY tracks SKUs (pack-size variants), not unique products.")
                 else:
                     n_top = total_skus
                     st.caption(f"Total SKUs: {total_skus}")
@@ -1826,14 +1842,15 @@ elif page == "📦 Distribution Analysis":
         else:
             # Slim ZSDCY data (no Material Name) → use df_zprod (all-time aggregates only)
             if len(df_zprod) > 0:
-                st.warning("⚠️ FY filter not available — current ZSDCY CSV is slim (city+category+monthly only). "
-                            "To enable FY filter at SKU level, regenerate `zsdcy_clean.csv` with `Material Name` column.")
                 prod_col = "Product" if "Product" in df_zprod.columns else df_zprod.columns[0]
                 top_agg = df_zprod.copy()
                 if top_col_p4 not in top_agg.columns:
                     top_agg[top_col_p4] = 0
                 top_agg = top_agg[top_agg[top_col_p4] > 0]
                 total_skus = len(top_agg)
+
+                # DYNAMIC HEADER for slim mode
+                st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database — {total_skus} SKUs</b> in current scope (All FYs, {top_metric}). All-time ZSDCY total: {_p4top_total} SKUs.</div>", unsafe_allow_html=True)
 
                 tcf_slim = st.columns(1)[0]
                 with tcf_slim:
@@ -1866,13 +1883,13 @@ elif page == "📦 Distribution Analysis":
     # ─── PANEL 2: PRODUCT GROWTH EXPLORER (all products + Mature toggle, matches Page 1) ───
     with col2:
         st.markdown(sec(f"🚀 Product Growth Explorer (FY-on-FY) — All Products"), unsafe_allow_html=True)
-        # Total count from ZSDCY (live)
+        # All-time canonical total
         if has_material_in_z:
             _p4grow_total = df_zsdcy["Material Name"].dropna().astype(str).nunique()
-            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4grow_total} unique SKUs</b> (pack-size variants).</div>", unsafe_allow_html=True)
         elif len(df_zgrow) > 0:
             _p4grow_total = len(df_zgrow)
-            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4grow_total} unique SKUs</b> (legacy fallback).</div>", unsafe_allow_html=True)
+        else:
+            _p4grow_total = 0
 
         if has_material_in_z and len(z_fys) >= 2:
             # FROM/TO FY pickers + metric + sort + filter (mature/all)
@@ -1965,6 +1982,10 @@ elif page == "📦 Distribution Analysis":
                     st.warning(f"No SKUs match filter for {grow_old_fy_p4}→{grow_new_fy_p4}.")
                 else:
                     asc_grow_p4 = (grow_sort_p4 == "Bottom (Slowest)")
+
+                    # DYNAMIC HEADER — count for current filter scope
+                    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database — {total_z} SKUs</b> in current scope ({grow_old_fy_p4}→{grow_new_fy_p4}, {grow_metric_p4}, {grow_filter_p4}). All-time ZSDCY total: {_p4grow_total} SKUs.</div>", unsafe_allow_html=True)
+
                     n_grow_p4 = st.slider(f"# SKUs (Total: {total_z})",
                                           5, total_z, min(50, total_z), key="p4_grow_n")
                     st.caption("ℹ️ ZSDCY SKU-level growth (pack-size variants). For product-level view, see Page 1.")
@@ -2006,9 +2027,6 @@ elif page == "📦 Distribution Analysis":
             # Slim ZSDCY → fall back to legacy zsdcy_growth.csv (calendar Y2024 vs Y2025)
             _zg = df_zgrow.copy() if len(df_zgrow) > 0 else pd.DataFrame()
             if not _zg.empty:
-                st.warning("⚠️ FY-on-FY comparison not available — current ZSDCY CSV is slim. "
-                            "Showing calendar 2024→2025 growth as fallback. To enable FY-on-FY at SKU level, "
-                            "regenerate `zsdcy_clean.csv` with `Material Name` column.")
                 if "Rev2024" not in _zg.columns and "Y2024" in _zg.columns:
                     _zg["Rev2024"] = pd.to_numeric(_zg["Y2024"], errors="coerce").fillna(0)
                     _zg["Rev2025"] = pd.to_numeric(_zg["Y2025"], errors="coerce").fillna(0)
@@ -2066,6 +2084,10 @@ elif page == "📦 Distribution Analysis":
                     st.info("No products match filter.")
                 else:
                     asc_grow_slim = (grow_sort_slim == "Bottom (Slowest)")
+
+                    # DYNAMIC HEADER for slim mode
+                    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database — {total_zg} SKUs</b> in current scope (calendar 2024→2025, {grow_filter_slim}). All-time ZSDCY total: {_p4grow_total} SKUs.</div>", unsafe_allow_html=True)
+
                     n_grow_slim = st.slider(f"# SKUs (Total: {total_zg})",
                                              5, total_zg, min(50, total_zg), key="p4_grow_n_slim")
                     st.caption("ℹ️ ZSDCY SKU-level (calendar 2024→2025 fallback). For FY framing, refresh ZSDCY data with Material Name.")
