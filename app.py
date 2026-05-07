@@ -731,9 +731,14 @@ if page == "📈 Sales Analysis":
             n_prods_s = total_products
             st.caption(f"Total products available: {total_products}")
 
-    prod_all_s = prod_all_s.sort_values(explorer_col, ascending=asc_s).head(n_prods_s).copy()
+    # Slider locks subset (always top N descending), then Sort just flips visual order
+    if asc_s:
+        # User picked Bottom — show same N but in ascending visual order
+        prod_all_s = prod_all_s.sort_values(explorer_col, ascending=False).head(n_prods_s).sort_values(explorer_col, ascending=True).copy()
+    else:
+        prod_all_s = prod_all_s.sort_values(explorer_col, ascending=False).head(n_prods_s).copy()
     prod_all_s["Label"] = prod_all_s[explorer_col].apply(fmt_explorer)
-    title_s = f"{'Bottom' if asc_s else 'Top'} {n_prods_s} Products — {fy_sel} ({explorer_metric})"
+    title_s = f"Top {n_prods_s} Products — {fy_sel} ({explorer_metric}) — {'Lowest first' if asc_s else 'Highest first'}"
     cs = "Reds_r" if asc_s else "Blues"
     fig_s = px.bar(prod_all_s, x=explorer_col, y="ProductName", orientation="h", text="Label",
                    color=explorer_col, color_continuous_scale=cs, title=title_s)
@@ -835,15 +840,20 @@ if page == "📈 Sales Analysis":
             st.warning(f"No products in scope for {grow_fy_old}→{grow_fy_new}. Try different FY pair.")
         else:
             asc_grow = (grow_sort == "Bottom (Slowest / Declining)")
-            scope_sorted = scope.sort_values("GrowthPct", ascending=asc_grow).reset_index(drop=True)
 
             # DYNAMIC HEADER — count for current filter scope
             st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database — {total_in_scope} products</b> in current scope ({grow_fy_old}→{grow_fy_new}, {grow_metric}, {grow_filter}). All-time DSR total: {_p1_dsr_total} products.</div>", unsafe_allow_html=True)
 
             n_grow = st.slider(f"Number of products to show (Total: {total_in_scope})",
                                5, total_in_scope, min(50, total_in_scope), key="p1_grow_n")
-            st.caption(f"ℹ️ DSR products meeting growth filter ({grow_filter}). Total varies by FY pair and filter mode.")
-            display_grow = scope_sorted.head(n_grow).copy()
+            st.caption(f"ℹ️ Slider locks subset (top N by growth). Sort just flips visual ordering within the locked N.")
+
+            # Slider locks subset (top N by growth desc), Sort flips visual order
+            top_subset = scope.sort_values("GrowthPct", ascending=False).head(n_grow)
+            if asc_grow:
+                display_grow = top_subset.sort_values("GrowthPct", ascending=True).reset_index(drop=True).copy()
+            else:
+                display_grow = top_subset.reset_index(drop=True).copy()
 
             col_a, col_b = st.columns(2)
 
@@ -870,7 +880,9 @@ if page == "📈 Sales Analysis":
 
             with col_b:
                 st.markdown(f"**Detail Table — All {total_in_scope} Products**")
-                disp = scope.sort_values("GrowthPct", ascending=asc_grow).copy()
+                disp = scope.sort_values("GrowthPct", ascending=False).copy()
+                if asc_grow:
+                    disp = disp.sort_values("GrowthPct", ascending=True).copy()
                 disp["Launch Date"] = disp["FirstSeen"].apply(lambda d: d.strftime("%b %Y") if pd.notna(d) else "—")
                 disp["Age (mo)"] = disp["LaunchAgeMonths"].apply(lambda x: f"{int(x)}" if pd.notna(x) else "—")
                 disp["Old"] = disp["old"].apply(fmt_explorer)
@@ -887,8 +899,14 @@ if page == "📈 Sales Analysis":
     st.markdown(sec("📅 Sales Seasonality Heatmap — Fiscal Year × Fiscal Month"), unsafe_allow_html=True)
 
     if _complete_fys and not _net_src.empty:
-        # Use only complete FYs so the heat doesn't get skewed by FY25-26 partial data
-        heat = _net_src[_net_src["FiscalYear"].isin(_complete_fys)].copy()
+        # Include complete FYs + the current partial FY (so user can see FY25-26 with May/Jun blank).
+        # Latest FY = the chronologically last FY with any data (may be partial).
+        _all_fys_heat = sorted(_net_src["FiscalYear"].dropna().unique())
+        _heat_fys_use = list(_complete_fys)
+        if _all_fys_heat and _all_fys_heat[-1] not in _heat_fys_use:
+            _heat_fys_use.append(_all_fys_heat[-1])
+
+        heat = _net_src[_net_src["FiscalYear"].isin(_heat_fys_use)].copy()
         heat["FMo"] = heat["Mo"].apply(lambda m: ((m-7)%12)+1)
         agg = heat.groupby(["FiscalYear","FMo"])["TotalRevenue"].sum().reset_index()
         pivot_h = agg.pivot(index="FiscalYear", columns="FMo", values="TotalRevenue")
@@ -897,14 +915,17 @@ if page == "📈 Sales Analysis":
         fmo_names = ["Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun"]
         pivot_h.columns = fmo_names
 
-        # Compute live insight: strongest 3 and weakest 3 fiscal months
-        avg_by_fmo = pivot_h.mean().sort_values(ascending=False)
+        # Compute live insight: strongest 3 and weakest 3 fiscal months (use complete FYs only for averages)
+        complete_pivot = pivot_h.loc[[fy for fy in _complete_fys if fy in pivot_h.index]] if _complete_fys else pivot_h
+        avg_by_fmo = complete_pivot.mean().sort_values(ascending=False)
         strongest = ", ".join(avg_by_fmo.head(3).index.tolist())
         weakest   = ", ".join(avg_by_fmo.tail(3).index.tolist())
+        partial_note = ""
+        if _all_fys_heat[-1] not in _complete_fys:
+            partial_note = f" Note: {_all_fys_heat[-1]} is partial — May/Jun cells will be empty until those months close."
         st.markdown(note(
             f"Each cell = one fiscal month's Net Sales in one FY. Darker blue = more revenue. "
-            f"Strongest fiscal months on average: {strongest}. Weakest: {weakest}. "
-            f"Showing {len(_complete_fys)} complete FYs ({_complete_fys[0]} to {_complete_fys[-1]})."
+            f"Strongest fiscal months on average: {strongest}. Weakest: {weakest}.{partial_note}"
         ), unsafe_allow_html=True)
 
         # Build cell labels
@@ -1045,8 +1066,18 @@ elif page == "💰 Promotional Analysis":
 
     with col2:
         st.markdown(sec("Where Does Money Go? (Activity Types)"), unsafe_allow_html=True)
+
+        # Per-insight FY filter
+        _wdmg_fy_options = ["All Selected FYs"] + (sorted(df_act["FiscalYear"].dropna().unique().tolist()) if "FiscalYear" in df_act.columns else [])
+        _wdmg_fy_pick = st.selectbox("Fiscal Year", _wdmg_fy_options, index=0, key="wdmg_fy")
+        if _wdmg_fy_pick == "All Selected FYs":
+            _wdmg_src = df_af.copy()
+        else:
+            _wdmg_src = df_act[df_act["FiscalYear"] == _wdmg_fy_pick].copy() if "FiscalYear" in df_act.columns else df_af.copy()
+        st.caption(f"📅 Showing: **{_wdmg_fy_pick}**")
+
         # Live top-2 activity types for the insight
-        ah_full = df_af.groupby("ActivityHead")["TotalAmount"].sum().sort_values(ascending=False)
+        ah_full = _wdmg_src.groupby("ActivityHead")["TotalAmount"].sum().sort_values(ascending=False)
         if len(ah_full) >= 2:
             ah_tot = ah_full.sum()
             a1_name, a1_val = ah_full.index[0], ah_full.iloc[0]
@@ -1056,16 +1087,19 @@ elif page == "💰 Promotional Analysis":
                 f"2nd: <b>{a2_name}</b> ({a2_val/ah_tot*100:.1f}%). "
                 "These are the primary doctor-engagement channels."
             ), unsafe_allow_html=True)
+        elif len(ah_full) == 1:
+            st.markdown(note(f"Only one activity type recorded for {_wdmg_fy_pick}."), unsafe_allow_html=True)
         else:
-            st.markdown(note("Top activity categories by spend."), unsafe_allow_html=True)
+            st.info(f"No activity data for {_wdmg_fy_pick}.")
 
-        asp = ah_full.head(8).reset_index()
-        asp["Label"] = asp["ActivityHead"] + "<br>" + asp["TotalAmount"].apply(fmt)
-        fig = px.pie(asp, values="TotalAmount", names="Label",
-                     color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_traces(textinfo="percent+label", textfont_size=10)
-        apply_layout(fig, height=330)
-        st.plotly_chart(fig, use_container_width=True)
+        if len(ah_full) > 0:
+            asp = ah_full.head(8).reset_index()
+            asp["Label"] = asp["ActivityHead"] + "<br>" + asp["TotalAmount"].apply(fmt)
+            fig = px.pie(asp, values="TotalAmount", names="Label",
+                         color_discrete_sequence=px.colors.qualitative.Set2)
+            fig.update_traces(textinfo="percent+label", textfont_size=10)
+            apply_layout(fig, height=330)
+            st.plotly_chart(fig, use_container_width=True)
 
     # ── Interactive Explorer — Split: Teams + Products (separate, all items) ──
     st.markdown("---")
@@ -1114,10 +1148,15 @@ elif page == "💰 Promotional Analysis":
                                        key="promo_sort_teams")
 
         asc_teams = (sort_teams == "Bottom (Lowest)")
-        team_show = team_data_full.sort_values("TotalAmount", ascending=asc_teams).head(n_teams).copy()
+        # Slider locks subset (top N), Sort flips visual order
+        team_subset = team_data_full.sort_values("TotalAmount", ascending=False).head(n_teams)
+        if asc_teams:
+            team_show = team_subset.sort_values("TotalAmount", ascending=True).copy()
+        else:
+            team_show = team_subset.copy()
         team_show["Label"] = team_show["TotalAmount"].apply(fmt)
         cs_t = "Reds_r" if asc_teams else "Blues"
-        title_t = f"{'Bottom' if asc_teams else 'Top'} {n_teams} Teams — {promo_fy_pick}"
+        title_t = f"Top {n_teams} Teams — {promo_fy_pick} ({'Lowest first' if asc_teams else 'Highest first'})"
         fig_t = px.bar(team_show, x="TotalAmount", y="RequestorTeams", orientation="h",
                        text="Label", color="TotalAmount", color_continuous_scale=cs_t,
                        title=title_t)
@@ -1149,10 +1188,15 @@ elif page == "💰 Promotional Analysis":
                                        key="promo_sort_prods")
 
         asc_prods = (sort_prods == "Bottom (Lowest)")
-        prod_show = prod_data_full.sort_values("TotalAmount", ascending=asc_prods).head(n_prods_p).copy()
+        # Slider locks subset (top N), Sort flips visual order
+        prod_subset = prod_data_full.sort_values("TotalAmount", ascending=False).head(n_prods_p)
+        if asc_prods:
+            prod_show = prod_subset.sort_values("TotalAmount", ascending=True).copy()
+        else:
+            prod_show = prod_subset.copy()
         prod_show["Label"] = prod_show["TotalAmount"].apply(fmt)
         cs_p = "Reds_r" if asc_prods else "Greens"
-        title_p = f"{'Bottom' if asc_prods else 'Top'} {n_prods_p} Products — {promo_fy_pick}"
+        title_p = f"Top {n_prods_p} Products — {promo_fy_pick} ({'Lowest first' if asc_prods else 'Highest first'})"
         fig_p = px.bar(prod_show, x="TotalAmount", y="Product", orientation="h",
                        text="Label", color="TotalAmount", color_continuous_scale=cs_p,
                        title=title_p)
@@ -1242,27 +1286,28 @@ elif page == "💰 Promotional Analysis":
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.markdown(sec("Budget by GL Head (Expense Category)"), unsafe_allow_html=True)
-        # Live insight: top GL head
-        gl_full = df_af.groupby("GLHead")["TotalAmount"].sum().sort_values(ascending=False)
-        if len(gl_full) > 0:
-            gl_top_name = gl_full.index[0]
-            gl_top_val  = gl_full.iloc[0]
-            gl_tot = gl_full.sum()
+        st.markdown(sec("Bottom 10 Products — Lowest Promo Investment"), unsafe_allow_html=True)
+        # Live insight: bottom 10 products with at least some spend
+        psp_pos = df_af[df_af["TotalAmount"] > 0].groupby("Product")["TotalAmount"].sum()
+        psp_bottom_full = psp_pos.nsmallest(10)
+        if len(psp_bottom_full) >= 3:
+            b1, b2, b3 = psp_bottom_full.index[0], psp_bottom_full.index[1], psp_bottom_full.index[2]
             st.markdown(note(
-                f"Top expense category: <b>{gl_top_name}</b> ({fmt(gl_top_val)} — "
-                f"{gl_top_val/gl_tot*100:.1f}% of total). GL Head = General Ledger expense category "
-                "used by PharmEvo accounting."
+                f"Smallest investments: <b>{b1}</b>, <b>{b2}</b>, <b>{b3}</b>. "
+                "Are these strategic minor products, or under-promoted opportunities? "
+                "Cross-check with sales: if any have strong revenue, consider boosting promo budget."
             ), unsafe_allow_html=True)
         else:
-            st.markdown(note("Top budget categories from the General Ledger."), unsafe_allow_html=True)
+            st.markdown(note("Products with lowest (non-zero) promotional investment."), unsafe_allow_html=True)
 
-        gl = gl_full.head(8).reset_index()
-        gl["Label"] = gl["TotalAmount"].apply(fmt)
-        fig = px.bar(gl, x="TotalAmount", y="GLHead", orientation="h", text="Label",
-                     color="TotalAmount", color_continuous_scale="Oranges")
+        psp_bot = psp_bottom_full.reset_index()
+        psp_bot["Label"] = psp_bot["TotalAmount"].apply(fmt)
+        # Display ascending so bottom-most appears at top of chart
+        psp_bot = psp_bot.sort_values("TotalAmount", ascending=True)
+        fig = px.bar(psp_bot, x="TotalAmount", y="Product", orientation="h", text="Label",
+                     color="TotalAmount", color_continuous_scale="Reds_r")
         fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=380, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+        apply_layout(fig, height=380, yaxis=dict(gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Total Spend (PKR)"), coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1583,13 +1628,18 @@ elif page == "✈️ Travel Analysis":
                 st.caption(f"Total cities: {total_cities_p3}")
 
         asc_c = (travel_c_sort == "Bottom (Least Trips)")
-        city_agg = city_agg.sort_values("TravelCount", ascending=asc_c).head(n_c).copy()
+        # Slider locks subset (top N by trips), Sort flips visual order
+        city_subset = city_agg.sort_values("TravelCount", ascending=False).head(n_c)
+        if asc_c:
+            city_agg = city_subset.sort_values("TravelCount", ascending=True).copy()
+        else:
+            city_agg = city_subset.copy()
         city_agg.columns = ["Name", "Trips"]
         city_agg["Label"] = city_agg["Trips"].apply(fmt_num)
         cs_c = "Reds_r" if asc_c else "Blues"
         fig_c = px.bar(city_agg, x="Trips", y="Name", orientation="h", text="Label",
                        color="Trips", color_continuous_scale=cs_c,
-                       title=f"{'Bottom' if asc_c else 'Top'} {n_c} Cities — {travel_c_fy}")
+                       title=f"Top {n_c} Cities — {travel_c_fy} ({'Lowest first' if asc_c else 'Highest first'})")
         fig_c.update_traces(textposition="outside", textfont_size=10)
         apply_layout(fig_c, height=max(380, n_c*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Trips"), coloraxis_showscale=False)
@@ -1622,13 +1672,18 @@ elif page == "✈️ Travel Analysis":
                 st.caption(f"Total teams: {total_teams_p3}")
 
         asc_pt = (travel_t_sort == "Bottom (Least Trips)")
-        team_agg_p3 = team_agg_p3.sort_values("TravelCount", ascending=asc_pt).head(n_pt).copy()
+        # Slider locks subset (top N by trips), Sort flips visual order
+        team_subset_p3 = team_agg_p3.sort_values("TravelCount", ascending=False).head(n_pt)
+        if asc_pt:
+            team_agg_p3 = team_subset_p3.sort_values("TravelCount", ascending=True).copy()
+        else:
+            team_agg_p3 = team_subset_p3.copy()
         team_agg_p3.columns = ["Name", "Trips"]
         team_agg_p3["Label"] = team_agg_p3["Trips"].apply(fmt_num)
         cs_pt = "Reds_r" if asc_pt else "Greens"
         fig_pt = px.bar(team_agg_p3, x="Trips", y="Name", orientation="h", text="Label",
                         color="Trips", color_continuous_scale=cs_pt,
-                        title=f"{'Bottom' if asc_pt else 'Top'} {n_pt} Teams — {travel_t_fy}")
+                        title=f"Top {n_pt} Teams — {travel_t_fy} ({'Lowest first' if asc_pt else 'Highest first'})")
         fig_pt.update_traces(textposition="outside", textfont_size=10)
         apply_layout(fig_pt, height=max(380, n_pt*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                      xaxis=dict(gridcolor="#eeeeee", title="Trips"), coloraxis_showscale=False)
@@ -1888,7 +1943,12 @@ elif page == "📦 Distribution Analysis":
                     st.caption(f"Total SKUs: {total_skus}")
 
             asc_top = (top_sort == "Bottom (Lowest)")
-            top_agg = top_agg.sort_values(top_col_p4, ascending=asc_top).head(n_top).copy()
+            # Slider locks subset (top N), Sort flips visual order
+            top_subset = top_agg.sort_values(top_col_p4, ascending=False).head(n_top)
+            if asc_top:
+                top_agg = top_subset.sort_values(top_col_p4, ascending=True).copy()
+            else:
+                top_agg = top_subset.copy()
             top_agg["ShortName"] = top_agg["Material Name"].astype(str).str[:35]
             top_agg["Label"] = top_agg[top_col_p4].apply(top_fmt_p4)
             cs_top = "Reds_r" if asc_top else "Blues"
@@ -1896,7 +1956,7 @@ elif page == "📦 Distribution Analysis":
             if len(top_agg) > 0:
                 fig = px.bar(top_agg, x=top_col_p4, y="ShortName", orientation="h", text="Label",
                              color=top_col_p4, color_continuous_scale=cs_top,
-                             title=f"{'Bottom' if asc_top else 'Top'} {n_top} SKUs — {top_fy} ({top_metric})")
+                             title=f"Top {n_top} SKUs — {top_fy} ({top_metric}) — {'Lowest first' if asc_top else 'Highest first'}")
                 fig.update_traces(textposition="outside", textfont_size=9)
                 apply_layout(fig, height=max(450, n_top*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                              xaxis=dict(gridcolor="#eeeeee", title=top_metric), coloraxis_showscale=False)
@@ -1925,7 +1985,12 @@ elif page == "📦 Distribution Analysis":
                         st.caption(f"Total SKUs: {total_skus}")
 
                 asc_top = (top_sort == "Bottom (Lowest)")
-                top_agg = top_agg.sort_values(top_col_p4, ascending=asc_top).head(n_top).copy()
+                # Slider locks subset (top N), Sort flips visual order
+                top_subset_slim = top_agg.sort_values(top_col_p4, ascending=False).head(n_top)
+                if asc_top:
+                    top_agg = top_subset_slim.sort_values(top_col_p4, ascending=True).copy()
+                else:
+                    top_agg = top_subset_slim.copy()
                 top_agg["ShortName"] = top_agg[prod_col].astype(str).str[:35]
                 top_agg["Label"] = top_agg[top_col_p4].apply(top_fmt_p4)
                 cs_top = "Reds_r" if asc_top else "Blues"
@@ -1934,7 +1999,7 @@ elif page == "📦 Distribution Analysis":
 
                 fig = px.bar(top_agg, x=top_col_p4, y="ShortName", orientation="h", text="Label",
                              color=top_col_p4, color_continuous_scale=cs_top,
-                             title=f"{'Bottom' if asc_top else 'Top'} {n_top} SKUs — All FYs ({top_metric})")
+                             title=f"Top {n_top} SKUs — All FYs ({top_metric}) — {'Lowest first' if asc_top else 'Highest first'}")
                 fig.update_traces(textposition="outside", textfont_size=9)
                 apply_layout(fig, height=max(450, n_top*22), yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
                              xaxis=dict(gridcolor="#eeeeee", title=top_metric), coloraxis_showscale=False)
@@ -2050,8 +2115,13 @@ elif page == "📦 Distribution Analysis":
 
                     n_grow_p4 = st.slider(f"# SKUs (Total: {total_z})",
                                           5, total_z, min(50, total_z), key="p4_grow_n")
-                    st.caption("ℹ️ ZSDCY SKU-level growth (pack-size variants). For product-level view, see Page 1.")
-                    display_grow_p4 = scope_z.sort_values("GrowthPct", ascending=asc_grow_p4).head(n_grow_p4).copy()
+                    st.caption("ℹ️ Slider locks subset (top N by growth). Sort flips visual ordering within the locked N.")
+                    # Slider locks subset (top N by growth desc), Sort flips visual order
+                    grow_subset_p4 = scope_z.sort_values("GrowthPct", ascending=False).head(n_grow_p4)
+                    if asc_grow_p4:
+                        display_grow_p4 = grow_subset_p4.sort_values("GrowthPct", ascending=True).copy()
+                    else:
+                        display_grow_p4 = grow_subset_p4.copy()
 
                     if len(display_grow_p4) >= 2:
                         g1 = display_grow_p4.iloc[0]
@@ -2075,7 +2145,9 @@ elif page == "📦 Distribution Analysis":
 
                     # Detail table — matches Page 1 format with launch date
                     with st.expander(f"📋 Detail Table — All {total_z} Products (with Launch Date)"):
-                        disp_p4 = scope_z.sort_values("GrowthPct", ascending=asc_grow_p4).copy()
+                        disp_p4 = scope_z.sort_values("GrowthPct", ascending=False).copy()
+                        if asc_grow_p4:
+                            disp_p4 = disp_p4.sort_values("GrowthPct", ascending=True).copy()
                         disp_p4["Launch"] = disp_p4["FirstSeen"].apply(lambda d: d.strftime("%b %Y") if pd.notna(d) else "—")
                         disp_p4["Age"] = disp_p4["LaunchAgeMonths"].apply(lambda x: f"{int(x)}" if pd.notna(x) else "—")
                         disp_p4["Old"] = disp_p4["old"].apply(grow_fmt_p4)
@@ -2152,8 +2224,13 @@ elif page == "📦 Distribution Analysis":
 
                     n_grow_slim = st.slider(f"# SKUs (Total: {total_zg})",
                                              5, total_zg, min(50, total_zg), key="p4_grow_n_slim")
-                    st.caption("ℹ️ ZSDCY SKU-level (calendar 2024→2025 fallback). For FY framing, refresh ZSDCY data with Material Name.")
-                    display_slim = scope_zg.sort_values("GrowthPct", ascending=asc_grow_slim).head(n_grow_slim).copy()
+                    st.caption("ℹ️ Slider locks subset (top N by growth). Sort flips visual ordering within the locked N.")
+                    # Slider locks subset (top N by growth desc), Sort flips visual order
+                    grow_subset_slim = scope_zg.sort_values("GrowthPct", ascending=False).head(n_grow_slim)
+                    if asc_grow_slim:
+                        display_slim = grow_subset_slim.sort_values("GrowthPct", ascending=True).copy()
+                    else:
+                        display_slim = grow_subset_slim.copy()
 
                     if len(display_slim) >= 2:
                         g1 = display_slim.iloc[0]
@@ -2176,7 +2253,9 @@ elif page == "📦 Distribution Analysis":
 
                     # Detail table
                     with st.expander(f"📋 Detail Table — All {total_zg} Products (with Launch Year)"):
-                        disp_slim = scope_zg.sort_values("GrowthPct", ascending=asc_grow_slim).copy()
+                        disp_slim = scope_zg.sort_values("GrowthPct", ascending=False).copy()
+                        if asc_grow_slim:
+                            disp_slim = disp_slim.sort_values("GrowthPct", ascending=True).copy()
                         disp_slim["Launch Year"] = disp_slim["LaunchYear"].apply(lambda y: int(y) if pd.notna(y) else "—")
                         disp_slim["2024"] = disp_slim["Rev2024"].apply(fmt)
                         disp_slim["2025"] = disp_slim["Rev2025"].apply(fmt)
@@ -4235,6 +4314,13 @@ elif page == "📌 Personal Dashboard":
     if "personal_charts" not in st.session_state:
         st.session_state.personal_charts = []
 
+    # Auto-clean stale entries: if user previously saved charts that no longer exist in the menu, drop them
+    _menu_keys = set(all_charts.keys())
+    _stale = [c for c in st.session_state.personal_charts if c not in _menu_keys]
+    if _stale:
+        st.session_state.personal_charts = [c for c in st.session_state.personal_charts if c in _menu_keys]
+        st.warning(f"⚠️ Removed {len(_stale)} chart(s) from your saved dashboard that no longer exist: {', '.join(_stale)}")
+
     col1, col2 = st.columns([3,1])
     with col1:
         selected_charts = st.multiselect(
@@ -4252,6 +4338,9 @@ elif page == "📌 Personal Dashboard":
             st.rerun()
 
     active = st.session_state.personal_charts if st.session_state.personal_charts else selected_charts
+
+    # Defensive filter — never try to render a chart that's not in the menu
+    active = [c for c in active if c in all_charts]
 
     if not active:
         st.info("👆 Select KPIs and charts above and click 'Save Dashboard' to build your personal view.")
