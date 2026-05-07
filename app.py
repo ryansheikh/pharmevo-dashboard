@@ -1273,6 +1273,34 @@ elif page == "💰 Promotional Analysis":
 elif page == "✈️ Travel Analysis":
     st.markdown("<h2 style='color:#2c5f8a'>✈️ Travel & Field Activity Analysis — Fiscal Year View</h2>", unsafe_allow_html=True)
 
+    # ── Explicit FY scope banner (so supervisor can immediately see what's shown) ──
+    _all_fys_travel = sorted(df_travel["FiscalYear"].dropna().unique()) if "FiscalYear" in df_travel.columns else []
+    _sidebar_fys_active = sorted([fy for fy in fy_filter if fy in _all_fys_travel])
+
+    st.markdown(
+        f"<div style='background:#fff3e0;padding:10px 14px;border-left:4px solid #e65100;border-radius:4px;margin-bottom:12px;'>"
+        f"<b>📅 Currently showing:</b> {', '.join(_sidebar_fys_active) if _sidebar_fys_active else 'No FY selected'} "
+        f"(from sidebar filter). Each insight below ALSO has its own FY selector if you want to focus on a single year."
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # Per-insight FY selector helper — list of ALL Travel FYs (bypasses sidebar filter)
+    _p3_fy_options = ["All Sidebar FYs"] + _all_fys_travel
+    _p3_default_fy = "All Sidebar FYs"
+    # If a complete FY exists, prefer it as the default for "Top Travellers" type insights
+    _p3_complete_fys = [fy for fy in _all_fys_travel
+                         if df_travel[df_travel["FiscalYear"]==fy]["Mo"].nunique() == 12]
+    _p3_default_complete = _p3_complete_fys[-1] if _p3_complete_fys else (_all_fys_travel[-1] if _all_fys_travel else None)
+
+    def _filter_travel_by_fy(fy_pick):
+        """Returns df_travel filtered by the per-insight FY selection.
+        'All Sidebar FYs' = honor sidebar (use df_t).
+        Specific FY = bypass sidebar and use that FY only."""
+        if fy_pick == "All Sidebar FYs":
+            return df_t.copy()
+        return df_travel[df_travel["FiscalYear"] == fy_pick].copy() if "FiscalYear" in df_travel.columns else df_travel.copy()
+
     # ── Live FY breakdown for subtitle ──
     _fy_sorted_p4 = sorted(df_t["FiscalYear"].dropna().unique()) if "FiscalYear" in df_t.columns else []
     _fy_mo_tr    = df_t.groupby("FiscalYear")["Mo"].nunique() if _fy_sorted_p4 else pd.Series(dtype=int)
@@ -1328,9 +1356,14 @@ elif page == "✈️ Travel Analysis":
 
     with col2:
         st.markdown(sec("Top 15 Most Visited Cities"), unsafe_allow_html=True)
+        # Per-insight FY selector
+        _p3_cities_fy = st.selectbox("Fiscal Year", _p3_fy_options, index=0, key="p3_cities_fy")
+        _df_cities_scope = _filter_travel_by_fy(_p3_cities_fy)
+        st.caption(f"📅 Showing: **{_p3_cities_fy}**")
+
         # Live top 2 cities + Karachi context
-        cities_full = df_t.groupby("VisitLocation")["TravelCount"].sum().sort_values(ascending=False)
-        karachi_trips = int(df_t[df_t["VisitLocation"].str.upper().str.contains("KARACHI", na=False)]["TravelCount"].sum())
+        cities_full = _df_cities_scope.groupby("VisitLocation")["TravelCount"].sum().sort_values(ascending=False)
+        karachi_trips = int(_df_cities_scope[_df_cities_scope["VisitLocation"].str.upper().str.contains("KARACHI", na=False)]["TravelCount"].sum())
         if len(cities_full) >= 2:
             c1n, c1v = cities_full.index[0], int(cities_full.iloc[0])
             c2n, c2v = cities_full.index[1], int(cities_full.iloc[1])
@@ -1344,7 +1377,7 @@ elif page == "✈️ Travel Analysis":
                 "Travel activity concentrates in Punjab cities.{karachi_note}".format(karachi_note=karachi_note)
             ), unsafe_allow_html=True)
         else:
-            st.markdown(note("Most visited cities across all FYs."), unsafe_allow_html=True)
+            st.markdown(note(f"Most visited cities — {_p3_cities_fy}."), unsafe_allow_html=True)
 
         lc = cities_full.head(15).reset_index()
         lc["Label"] = lc["TravelCount"].apply(fmt_num)
@@ -1367,10 +1400,15 @@ elif page == "✈️ Travel Analysis":
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("Division Performance — Travel Activity"), unsafe_allow_html=True)
+        # Per-insight FY selector
+        _p3_div_fy = st.selectbox("Fiscal Year", _p3_fy_options, index=0, key="p3_div_fy")
+        _df_div_scope = _filter_travel_by_fy(_p3_div_fy)
+        st.caption(f"📅 Showing: **{_p3_div_fy}**")
 
-        dv = df_t.groupby("TravellerDivision").agg(
+        dv = _df_div_scope.groupby("TravellerDivision").agg(
             Trips=("TravelCount","sum"), Nights=("NoofNights","sum"),
             People=("Traveller","nunique")).reset_index()
+        dv = dv[dv["Trips"] > 0]
         dv["TripsPerPerson"] = (dv["Trips"]/dv["People"]).round(1)
         dv["DivisionName"]   = dv["TravellerDivision"].map(div_name_map).fillna(dv["TravellerDivision"])
         dv["Label"]          = dv["Trips"].apply(fmt_num) + " (" + dv["TripsPerPerson"].astype(str) + "/person)"
@@ -1388,7 +1426,7 @@ elif page == "✈️ Travel Analysis":
                 f"({low_eff['TripsPerPerson']} trips/person, {int(low_eff['People'])} people)."
             ), unsafe_allow_html=True)
         else:
-            st.markdown(note("Division-level travel activity."), unsafe_allow_html=True)
+            st.markdown(note(f"Division-level travel activity — {_p3_div_fy}."), unsafe_allow_html=True)
 
         colors = ["#c62828" if t<200 else "#e65100" if t<1000 else "#2c5f8a" for t in dv["Trips"]]
         fig = go.Figure(go.Bar(x=dv["Trips"], y=dv["DivisionName"], orientation="h",
@@ -1409,9 +1447,13 @@ elif page == "✈️ Travel Analysis":
 
     with col2:
         st.markdown(sec("Travel Seasonality — by Fiscal Month"), unsafe_allow_html=True)
+        # Per-insight FY selector
+        _p3_seas_fy = st.selectbox("Fiscal Year", _p3_fy_options, index=0, key="p3_seas_fy")
+        _df_seas_scope = _filter_travel_by_fy(_p3_seas_fy)
+        st.caption(f"📅 Showing: **{_p3_seas_fy}**")
 
         # Fiscal month aggregation
-        _mt_src = df_t.copy()
+        _mt_src = _df_seas_scope.copy()
         if "FiscalMonth" not in _mt_src.columns:
             _mt_src["FiscalMonth"] = _mt_src["Mo"].apply(lambda m: ((int(m)-7)%12)+1)
         mt = _mt_src.groupby("FiscalMonth")["TravelCount"].sum().reset_index()
@@ -1441,23 +1483,42 @@ elif page == "✈️ Travel Analysis":
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(sec("Top 15 Most Active Travellers"), unsafe_allow_html=True)
-        tv = df_t.groupby(["Traveller","TravellerDivision"]).agg(
+        # Per-insight FY selector — default to LATEST COMPLETE FY so ex-employees from older FYs don't show
+        _trav_fy_opts = _p3_fy_options.copy()
+        _trav_default_idx = 0
+        if _p3_default_complete and _p3_default_complete in _trav_fy_opts:
+            _trav_default_idx = _trav_fy_opts.index(_p3_default_complete)
+        _p3_trav_fy = st.selectbox("Fiscal Year (default = latest complete FY to exclude ex-employees)",
+                                    _trav_fy_opts, index=_trav_default_idx, key="p3_trav_fy")
+        _df_trav_scope = _filter_travel_by_fy(_p3_trav_fy)
+        st.caption(f"📅 Showing: **{_p3_trav_fy}** — travellers active in this FY only.")
+
+        tv = _df_trav_scope.groupby(["Traveller","TravellerDivision"]).agg(
             Trips=("TravelCount","sum"), Nights=("NoofNights","sum")).reset_index()
+        tv = tv[tv["Trips"] > 0]
         tv = tv.nlargest(15,"Trips")
-        tv["Label"] = tv["Trips"].apply(fmt_num)
-        fig = px.bar(tv, x="Trips", y="Traveller", orientation="h", text="Label",
-                     color="TravellerDivision", color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_traces(textposition="outside", textfont_size=10)
-        apply_layout(fig, height=480, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Trips"))
-        st.plotly_chart(fig, use_container_width=True)
+        if len(tv) > 0:
+            tv["Label"] = tv["Trips"].apply(fmt_num)
+            fig = px.bar(tv, x="Trips", y="Traveller", orientation="h", text="Label",
+                         color="TravellerDivision", color_discrete_sequence=px.colors.qualitative.Set2)
+            fig.update_traces(textposition="outside", textfont_size=10)
+            apply_layout(fig, height=480, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                         xaxis=dict(gridcolor="#eeeeee", title="Total Trips"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info(f"No traveller activity in {_p3_trav_fy}.")
 
     with col2:
         st.markdown(sec("Top 10 Hotels by Bookings"), unsafe_allow_html=True)
+        # Per-insight FY selector
+        _p3_hotel_fy = st.selectbox("Fiscal Year", _p3_fy_options, index=0, key="p3_hotel_fy")
+        _df_hotel_scope = _filter_travel_by_fy(_p3_hotel_fy)
+        st.caption(f"📅 Showing: **{_p3_hotel_fy}**")
+
         # Live: top hotel name + its share
-        ht_full = df_t[df_t["HotelName"] != "Not Recorded"].groupby("HotelName").agg(
+        ht_full = _df_hotel_scope[_df_hotel_scope["HotelName"] != "Not Recorded"].groupby("HotelName").agg(
             Bookings=("TravelCount","sum"), Nights=("NoofNights","sum")).reset_index()
-        ht_full = ht_full.sort_values("Bookings", ascending=False)
+        ht_full = ht_full[ht_full["Bookings"] > 0].sort_values("Bookings", ascending=False)
         if len(ht_full) > 0:
             top_hotel = ht_full.iloc[0]
             tot_bookings = ht_full["Bookings"].sum()
@@ -1468,16 +1529,17 @@ elif page == "✈️ Travel Analysis":
                 "Negotiate bulk corporate rates with top hotels to reduce travel costs."
             ), unsafe_allow_html=True)
         else:
-            st.markdown(note("Top hotels by booking count."), unsafe_allow_html=True)
+            st.info(f"No hotel bookings in {_p3_hotel_fy}.")
 
-        ht = ht_full.head(10).copy()
-        ht["Label"] = ht["Bookings"].apply(fmt_num)
-        fig = px.bar(ht, x="Bookings", y="HotelName", orientation="h", text="Label",
-                     color="Bookings", color_continuous_scale="Purples")
-        fig.update_traces(textposition="outside", textfont_size=11)
-        apply_layout(fig, height=400, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
-                     xaxis=dict(gridcolor="#eeeeee", title="Total Bookings"), coloraxis_showscale=False)
-        st.plotly_chart(fig, use_container_width=True)
+        if len(ht_full) > 0:
+            ht = ht_full.head(10).copy()
+            ht["Label"] = ht["Bookings"].apply(fmt_num)
+            fig = px.bar(ht, x="Bookings", y="HotelName", orientation="h", text="Label",
+                         color="Bookings", color_continuous_scale="Purples")
+            fig.update_traces(textposition="outside", textfont_size=11)
+            apply_layout(fig, height=400, yaxis=dict(autorange="reversed", gridcolor="#eeeeee"),
+                         xaxis=dict(gridcolor="#eeeeee", title="Total Bookings"), coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
 
     # ── Travel Explorer — split into CITIES + TEAMS, each with FY filter ──
     # Note: Explorer bypasses sidebar FY filter so you can compare any FY.
@@ -2939,24 +3001,6 @@ Potential annual saving:
 
         # ═══ 10 Key Findings ═══
         st.markdown("### 🎯 Key Management Findings")
-
-        # ─── Variable setup for FINDING 2 (top-ROI product) ───
-        # These were previously computed inside FINDING 1 (now removed).
-        _rv_ei  = _sales_gross_ei.groupby("ProductName")["TotalRevenue"].sum()
-        _sp_ei  = df_act.groupby("Product")["TotalAmount"].sum()
-        _roi_ei = pd.DataFrame({"Revenue": _rv_ei, "Spend": _sp_ei}).dropna()
-        _roi_ei = _roi_ei[(_roi_ei["Spend"] > 1e6) & (_roi_ei["Revenue"] > 10e6)]
-        _roi_ei["ROI"] = _roi_ei["Revenue"] / _roi_ei["Spend"]
-        _roi_ei = _roi_ei.sort_values("ROI", ascending=False)
-        if len(_roi_ei) > 0:
-            top_product_name  = str(_roi_ei.index[0])
-            top_product_roi   = float(_roi_ei.iloc[0]["ROI"])
-            top_product_rev   = float(_roi_ei.iloc[0]["Revenue"])
-            top_product_spend = float(_roi_ei.iloc[0]["Spend"])
-            _top_roi_f2       = _roi_ei.head(10).copy()
-        else:
-            top_product_name, top_product_roi, top_product_rev, top_product_spend = "N/A", 0.0, 0.0, 0.0
-            _top_roi_f2 = pd.DataFrame({"ROI": []})
 
         st.markdown(sec(f"🟢 FINDING 2 — {top_product_name}: {fmt(top_product_spend)} Investment Returns {fmt(top_product_rev)} ({top_product_roi:.1f}x ROI)"), unsafe_allow_html=True)
         col1, col2 = st.columns(2)
