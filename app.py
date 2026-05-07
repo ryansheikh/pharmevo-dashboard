@@ -444,77 +444,6 @@ product_launch = compute_product_launch_dates(df_sales)
 _all_fys = sorted([fy for fy in df_sales["FiscalYear"].dropna().unique()])
 _default_fys = _all_fys[-4:] if len(_all_fys) >= 4 else _all_fys
 
-# ── Product Reconciliation: cross-database product universe analysis ──
-# Computes the "ghost products" universe — products with promo spend but no sales.
-# This is referenced by Page 1 (full reconciliation section) AND
-# tooltip disclaimers on every page that shows product counts.
-@st.cache_data(ttl=86400)
-def compute_product_reconciliation(_df_sales, _df_act, _all_fys_ref):
-    """Returns a dict with reconciliation counts and ghost product list.
-
-    Counts are case-insensitive, normalized for matching.
-    """
-    # Active products in DSR (sales side)
-    if "SaleFlag" in _df_sales.columns:
-        sales_active = _df_sales[
-            (_df_sales["SaleFlag"].isin(["S","R"])) &
-            (_df_sales["TotalRevenue"].notna())
-        ].copy()
-    else:
-        sales_active = _df_sales.copy()
-    dsr_products_set = set(sales_active["ProductName"].dropna().astype(str).str.strip().str.upper().unique())
-
-    # Promo products in FTTS (activities side)
-    promo_active = _df_act[_df_act["TotalAmount"] > 0].copy() if "TotalAmount" in _df_act.columns else _df_act.copy()
-    ftts_products_set = set(promo_active["Product"].dropna().astype(str).str.strip().str.upper().unique())
-
-    # Per-FY counts
-    def _per_fy_dsr(fy):
-        if "FiscalYear" not in sales_active.columns or fy is None: return 0
-        s = sales_active[sales_active["FiscalYear"] == fy]
-        return s["ProductName"].dropna().astype(str).str.strip().str.upper().nunique()
-
-    def _per_fy_ftts(fy):
-        if "FiscalYear" not in promo_active.columns or fy is None: return 0
-        a = promo_active[promo_active["FiscalYear"] == fy]
-        return a["Product"].dropna().astype(str).str.strip().str.upper().nunique()
-
-    # Ghost = in FTTS but not in DSR (promo spent, no sales)
-    ghost_products = ftts_products_set - dsr_products_set
-    overlap = dsr_products_set & ftts_products_set
-
-    # Map ghost products back to original case + show their promo spend
-    ghost_records = []
-    for prod_upper in ghost_products:
-        orig_rows = promo_active[promo_active["Product"].astype(str).str.strip().str.upper() == prod_upper]
-        if len(orig_rows) > 0:
-            orig_name = str(orig_rows["Product"].iloc[0]).strip()
-            spend = orig_rows["TotalAmount"].sum() if "TotalAmount" in orig_rows.columns else 0
-            ghost_records.append({"Product": orig_name, "PromoSpend": float(spend),
-                                   "ActivityCount": int(len(orig_rows))})
-
-    ghost_df = pd.DataFrame(ghost_records).sort_values("PromoSpend", ascending=False) if ghost_records else pd.DataFrame()
-
-    fy_curr = _all_fys_ref[-1] if _all_fys_ref else None
-    fy_last = _all_fys_ref[-2] if len(_all_fys_ref) >= 2 else None
-
-    return {
-        "dsr_count_total":       len(dsr_products_set),
-        "ftts_count_total":      len(ftts_products_set),
-        "overlap_count":         len(overlap),
-        "ghost_count":           len(ghost_products),
-        "ghost_total_spend":     ghost_df["PromoSpend"].sum() if len(ghost_df) > 0 else 0,
-        "ghost_df":              ghost_df,
-        "dsr_count_fy_curr":     _per_fy_dsr(fy_curr),
-        "dsr_count_fy_last":     _per_fy_dsr(fy_last),
-        "ftts_count_fy_curr":    _per_fy_ftts(fy_curr),
-        "ftts_count_fy_last":    _per_fy_ftts(fy_last),
-        "fy_last":               fy_last,
-        "fy_curr":               fy_curr,
-    }
-
-product_recon = compute_product_reconciliation(df_sales, df_act, _all_fys)
-
 # ── HELPERS ──────────────────────────────────────────────────
 def fmt(val):
     if val >= 1e9:   return f"PKR {val/1e9:.1f}B"
@@ -718,88 +647,14 @@ if page == "📈 Sales Analysis":
 
     fmt_metric = (lambda v: fmt_num(v) if is_units else fmt(v))
 
-    # ════════════════════════════════════════════════════════════════════
-    # 🔬 PRODUCT RECONCILIATION — cross-database product universe finding
-    # ════════════════════════════════════════════════════════════════════
-    st.markdown(sec("🔬 Product Reconciliation — Where Are We Spending Promo Without Sales Return?"), unsafe_allow_html=True)
-    _recon = product_recon
-    _ghost_df = _recon.get("ghost_df", pd.DataFrame())
-    _ghost_count = int(_recon.get("ghost_count", 0))
-    _ghost_spend = float(_recon.get("ghost_total_spend", 0))
-    _dsr_total = int(_recon.get("dsr_count_total", 0))
-    _ftts_total = int(_recon.get("ftts_count_total", 0))
-    _overlap = int(_recon.get("overlap_count", 0))
 
-    st.markdown(note(
-        f"<b>Cross-database product universe analysis.</b> "
-        f"DSR (Sales) tracks <b>{_dsr_total}</b> products with sales activity. "
-        f"FTTS (Promo) tracks <b>{_ftts_total}</b> products receiving promo budget. "
-        f"<b>Gap = {_ghost_count} 'ghost products'</b> — receiving promo budget but generating ZERO sales. "
-        f"Total promo spend on ghosts: <b>{fmt(_ghost_spend)}</b>. "
-        f"This may include discontinued products, mis-categorized items, or pre-launch budgets."
-    ), unsafe_allow_html=True)
-
-    rec1, rec2, rec3, rec4 = st.columns(4)
-    rec1.markdown(kpi("DSR — Products with Sales", str(_dsr_total),
-                      "Active commercial products"), unsafe_allow_html=True)
-    rec2.markdown(kpi("FTTS — Products with Promo", str(_ftts_total),
-                      "Total promotional reach"), unsafe_allow_html=True)
-    rec3.markdown(kpi("In BOTH (ROI Universe)", str(_overlap),
-                      "What ROI calculations use"), unsafe_allow_html=True)
-    rec4.markdown(kpi("🚨 Ghost Products", str(_ghost_count),
-                      f"Promo spend, NO sales — {fmt(_ghost_spend)} wasted",
-                      red=(_ghost_count > 20)), unsafe_allow_html=True)
-
-    # Show the actual ghost products so supervisor can investigate specific ones
-    if len(_ghost_df) > 0:
-        with st.expander(f"📋 List the {_ghost_count} Ghost Products — Promo Spend with No DSR Sales"):
-            disp_ghost = _ghost_df.copy()
-            disp_ghost["Promo Spend"] = disp_ghost["PromoSpend"].apply(fmt)
-            disp_ghost = disp_ghost[["Product", "Promo Spend", "ActivityCount"]]
-            disp_ghost.columns = ["Product (in FTTS)", "Promo Spent", "# Activities"]
-            st.dataframe(disp_ghost, use_container_width=True, hide_index=True,
-                         height=min(500, len(disp_ghost)*32 + 50))
-            top_ghost_spend = float(_ghost_df.head(10)["PromoSpend"].sum())
-            st.caption(f"💡 Top 10 ghost products alone consumed PKR {top_ghost_spend/1e6:.1f}M in promo. "
-                       f"Audit these first: they may be discontinued, mis-categorized in promo, or pre-launch products.")
-
-    # Side-by-Side comparison: DSR vs FTTS counts per FY
-    fy_recon_data = []
-    for fy in _all_fys[-3:] if len(_all_fys) >= 3 else _all_fys:
-        if fy is None: continue
-        dsr_n = (df_sales[(df_sales["FiscalYear"]==fy) &
-                          (df_sales["SaleFlag"].isin(["S","R"]) if "SaleFlag" in df_sales.columns else True)]
-                 ["ProductName"].astype(str).str.strip().str.upper().nunique())
-        ftts_n = (df_act[(df_act["FiscalYear"]==fy) & (df_act["TotalAmount"]>0)]
-                  ["Product"].astype(str).str.strip().str.upper().nunique())
-        fy_recon_data.append({"FY": fy, "DSR (Sales)": dsr_n, "FTTS (Promo)": ftts_n,
-                              "Gap": ftts_n - dsr_n})
-
-    if fy_recon_data:
-        fy_recon_df = pd.DataFrame(fy_recon_data)
-        col_r1, col_r2 = st.columns([2,1])
-        with col_r1:
-            fig_recon = go.Figure()
-            fig_recon.add_trace(go.Bar(x=fy_recon_df["FY"], y=fy_recon_df["DSR (Sales)"],
-                                        name="DSR (Sales)", marker_color="#1565c0",
-                                        text=fy_recon_df["DSR (Sales)"], textposition="outside"))
-            fig_recon.add_trace(go.Bar(x=fy_recon_df["FY"], y=fy_recon_df["FTTS (Promo)"],
-                                        name="FTTS (Promo)", marker_color="#e65100",
-                                        text=fy_recon_df["FTTS (Promo)"], textposition="outside"))
-            apply_layout(fig_recon, height=320, barmode="group",
-                         xaxis=dict(gridcolor="#eee", title="Fiscal Year"),
-                         yaxis=dict(gridcolor="#eee", title="# Products"))
-            fig_recon.update_layout(title="Products with Sales (DSR) vs Promo (FTTS) by FY")
-            st.plotly_chart(fig_recon, use_container_width=True)
-        with col_r2:
-            disp_recon = fy_recon_df.copy()
-            disp_recon["Gap"] = disp_recon["Gap"].apply(lambda v: f"+{v}" if v>0 else str(v))
-            st.dataframe(disp_recon, use_container_width=True, hide_index=True)
-            st.caption("Gap = products with promo but no sales for that FY. Persistent positive gap = systematic overreach.")
-
-    st.markdown("---")
+    # Live total count from DSR
+    _p1_dsr_total = (df_sales[df_sales["SaleFlag"].isin(["S","R"])]["ProductName"]
+                      .dropna().astype(str).str.strip().nunique() if "SaleFlag" in df_sales.columns
+                      else df_sales["ProductName"].dropna().astype(str).str.strip().nunique())
 
     st.markdown(sec(f"Product {metric_toggle}: Last 3 Fiscal Years — Side by Side"), unsafe_allow_html=True)
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b> with sales activity (showing top 15).</div>", unsafe_allow_html=True)
     st.markdown(note(
         f"Comparing {', '.join([fy_label[fy] for fy in last_3_fys])}. "
         f"{'Note: FY25-26 currently has only ~10 months of data (Jul 2025 – Apr 2026 partial)' if any(fy_months_count[fy]<12 for fy in last_3_fys) else 'All shown FYs are complete.'} "
@@ -837,6 +692,7 @@ if page == "📈 Sales Analysis":
     # ─── Product Explorer — ALL products, slider goes from 5 to total count ───
     st.markdown("---")
     st.markdown(sec("🔍 Product Explorer — Adjustable View (All Products)"), unsafe_allow_html=True)
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b>. Adjust slider to show any number from 5 to all.</div>", unsafe_allow_html=True)
 
     # First filter by selected metric and FY scope to figure out total product count
     fy_options = ["All Fiscal Years"] + _fy_sorted_p2
@@ -866,7 +722,7 @@ if page == "📈 Sales Analysis":
         if total_products >= 5:
             n_prods_s = st.slider(f"Number of products (Total: {total_products})",
                                   5, total_products, min(50, total_products), key="sales_n")
-            st.caption(f"ℹ️ Counting DSR products with sales activity. Different from FTTS (Promo) and ZSDCY (SKUs) — see Reconciliation above.")
+            st.caption(f"ℹ️ DSR Sales database. Total products with sales: see count above slider.")
         else:
             n_prods_s = total_products
             st.caption(f"Total products available: {total_products}")
@@ -888,6 +744,7 @@ if page == "📈 Sales Analysis":
 
     # ─── Product Growth Explorer — ALL products (with Mature toggle) ───
     st.markdown(sec(f"🚀 Product Growth Explorer — All Products"), unsafe_allow_html=True)
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>DSR Sales database total: {_p1_dsr_total} products</b>. Filter narrows the count based on growth criteria you select.</div>", unsafe_allow_html=True)
 
     # FY pair selector — let user pick which 2 FYs to compare
     col_g1, col_g2, col_g3, col_g4, col_g5 = st.columns([1,1,1,1,1])
@@ -1207,6 +1064,10 @@ elif page == "💰 Promotional Analysis":
     # ── Interactive Explorer — Split: Teams + Products (separate, all items) ──
     st.markdown("---")
     st.markdown(sec("🔍 Promo Spend Explorer — Adjustable (All Teams + All Products)"), unsafe_allow_html=True)
+    # Live counts from FTTS Activities database
+    _p2_ftts_teams = df_act[df_act["TotalAmount"] > 0]["RequestorTeams"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_act.columns else 0
+    _p2_ftts_prods = df_act[df_act["TotalAmount"] > 0]["Product"].dropna().astype(str).str.strip().nunique() if "TotalAmount" in df_act.columns else 0
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>FTTS Activities database total: {_p2_ftts_teams} teams + {_p2_ftts_prods} products</b> with promo spend.</div>", unsafe_allow_html=True)
 
     # FY filter for Explorer (lets supervisor compare any FY against another)
     explorer_fy_options = ["All Selected FYs"] + sorted(df_af["FiscalYear"].dropna().unique().tolist()) if "FiscalYear" in df_af.columns else ["All"]
@@ -1267,7 +1128,7 @@ elif page == "💰 Promotional Analysis":
             if total_prods_p >= 5:
                 n_prods_p = st.slider(f"# Products (Total: {total_prods_p})", 5, total_prods_p,
                                        min(15, total_prods_p), key="promo_n_prods")
-                st.caption(f"ℹ️ FTTS products receiving promo budget. Different from DSR (Sales) — see Page 1 Reconciliation.")
+                st.caption(f"ℹ️ FTTS Activities database. Promo-receiving products only.")
             else:
                 n_prods_p = max(1, total_prods_p)
                 st.caption(f"Total products: {total_prods_p}")
@@ -1610,6 +1471,10 @@ elif page == "✈️ Travel Analysis":
     # Note: Explorer bypasses sidebar FY filter so you can compare any FY.
     st.markdown("---")
     st.markdown(sec("🔍 Travel Explorer — Adjustable (All Cities + All Teams)"), unsafe_allow_html=True)
+    # Live counts from FTTS Travel database
+    _p3_cities = df_travel[df_travel["TravelCount"] > 0]["VisitLocation"].dropna().astype(str).str.strip().nunique() if "TravelCount" in df_travel.columns else 0
+    _p3_teams = df_travel[df_travel["TravelCount"] > 0]["TravellerTeam"].dropna().astype(str).str.strip().nunique() if "TravelCount" in df_travel.columns else 0
+    st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>FTTS Travel database total: {_p3_cities} cities + {_p3_teams} teams</b> with trip activity.</div>", unsafe_allow_html=True)
 
     # FY options for filter (from full df_travel)
     p3_fys_avail = sorted(df_travel["FiscalYear"].dropna().unique()) if "FiscalYear" in df_travel.columns else []
@@ -1902,6 +1767,13 @@ elif page == "📦 Distribution Analysis":
     # ─── PANEL 1: PRODUCT REVENUE EXPLORER (matches Page 1 Product Explorer architecture) ───
     with col1:
         st.markdown(sec("🏆 Product Revenue Explorer (SKU Level) — All Products"), unsafe_allow_html=True)
+        # Total count from ZSDCY (live)
+        if "Material Name" in df_zsdcy.columns:
+            _p4top_total = df_zsdcy["Material Name"].dropna().astype(str).nunique()
+            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4top_total} unique SKUs</b> (pack-size variants).</div>", unsafe_allow_html=True)
+        elif len(df_zprod) > 0:
+            _p4top_total = len(df_zprod)
+            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4top_total} unique SKUs.</b></div>", unsafe_allow_html=True)
         tcf1, tcf2 = st.columns(2)
         with tcf1:
             top_metric = st.radio("Metric", ["Revenue", "Units"], horizontal=True, key="p4_top_metric")
@@ -1952,8 +1824,10 @@ elif page == "📦 Distribution Analysis":
                              xaxis=dict(gridcolor="#eeeeee", title=top_metric), coloraxis_showscale=False)
                 st.plotly_chart(fig, use_container_width=True)
         else:
-            # Slim ZSDCY → use df_zprod (all-time aggregates only)
+            # Slim ZSDCY data (no Material Name) → use df_zprod (all-time aggregates only)
             if len(df_zprod) > 0:
+                st.warning("⚠️ FY filter not available — current ZSDCY CSV is slim (city+category+monthly only). "
+                            "To enable FY filter at SKU level, regenerate `zsdcy_clean.csv` with `Material Name` column.")
                 prod_col = "Product" if "Product" in df_zprod.columns else df_zprod.columns[0]
                 top_agg = df_zprod.copy()
                 if top_col_p4 not in top_agg.columns:
@@ -1966,7 +1840,7 @@ elif page == "📦 Distribution Analysis":
                     if total_skus >= 5:
                         n_top = st.slider(f"# SKUs (Total: {total_skus})", 5, total_skus,
                                           min(50, total_skus), key="p4_top_n_slim")
-                        st.caption("ℹ️ ZSDCY tracks SKUs (pack-size variants), not unique products.")
+                        st.caption("ℹ️ ZSDCY tracks SKUs (pack-size variants), not unique products. All-time totals shown.")
                     else:
                         n_top = total_skus
                         st.caption(f"Total SKUs: {total_skus}")
@@ -1992,6 +1866,13 @@ elif page == "📦 Distribution Analysis":
     # ─── PANEL 2: PRODUCT GROWTH EXPLORER (all products + Mature toggle, matches Page 1) ───
     with col2:
         st.markdown(sec(f"🚀 Product Growth Explorer (FY-on-FY) — All Products"), unsafe_allow_html=True)
+        # Total count from ZSDCY (live)
+        if has_material_in_z:
+            _p4grow_total = df_zsdcy["Material Name"].dropna().astype(str).nunique()
+            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4grow_total} unique SKUs</b> (pack-size variants).</div>", unsafe_allow_html=True)
+        elif len(df_zgrow) > 0:
+            _p4grow_total = len(df_zgrow)
+            st.markdown(f"<div style='color:#444;font-size:13px;margin-bottom:6px;'>📊 <b>ZSDCY database total: {_p4grow_total} unique SKUs</b> (legacy fallback).</div>", unsafe_allow_html=True)
 
         if has_material_in_z and len(z_fys) >= 2:
             # FROM/TO FY pickers + metric + sort + filter (mature/all)
@@ -2125,6 +2006,9 @@ elif page == "📦 Distribution Analysis":
             # Slim ZSDCY → fall back to legacy zsdcy_growth.csv (calendar Y2024 vs Y2025)
             _zg = df_zgrow.copy() if len(df_zgrow) > 0 else pd.DataFrame()
             if not _zg.empty:
+                st.warning("⚠️ FY-on-FY comparison not available — current ZSDCY CSV is slim. "
+                            "Showing calendar 2024→2025 growth as fallback. To enable FY-on-FY at SKU level, "
+                            "regenerate `zsdcy_clean.csv` with `Material Name` column.")
                 if "Rev2024" not in _zg.columns and "Y2024" in _zg.columns:
                     _zg["Rev2024"] = pd.to_numeric(_zg["Y2024"], errors="coerce").fillna(0)
                     _zg["Rev2025"] = pd.to_numeric(_zg["Y2025"], errors="coerce").fillna(0)
